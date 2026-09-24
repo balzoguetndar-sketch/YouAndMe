@@ -72,6 +72,9 @@ export function ActiveCallRoom({
     const pc = new RTCPeerConnection(ICE_SERVERS);
     pcRef.current = pc;
 
+    // Stream distant accumulé
+    const remoteStream = new MediaStream();
+
     // Fonction pour vider la file d'attente des candidats ICE dès que la remoteDescription est prête
     const processPendingIceCandidates = async () => {
       while (pendingIceCandidates.length > 0) {
@@ -86,16 +89,28 @@ export function ActiveCallRoom({
       }
     };
 
-    // Réception des flux distants
+    // Réception des flux distants (Audio et Vidéo)
     pc.ontrack = (event) => {
       if (event.streams && event.streams[0]) {
-        if (remoteVideoRef.current) {
-          remoteVideoRef.current.srcObject = event.streams[0];
+        event.streams[0].getTracks().forEach((track) => {
+          if (!remoteStream.getTracks().some((t) => t.id === track.id)) {
+            remoteStream.addTrack(track);
+          }
+        });
+      } else if (event.track) {
+        if (!remoteStream.getTracks().some((t) => t.id === event.track.id)) {
+          remoteStream.addTrack(event.track);
         }
-        if (isMounted) {
-          setRemoteStreamReceived(true);
-          setConnectionStatus('connected');
-        }
+      }
+
+      if (remoteVideoRef.current) {
+        remoteVideoRef.current.srcObject = remoteStream;
+        remoteVideoRef.current.play().catch(() => {});
+      }
+
+      if (isMounted) {
+        setRemoteStreamReceived(true);
+        setConnectionStatus('connected');
       }
     };
 
@@ -119,6 +134,11 @@ export function ActiveCallRoom({
         });
       }
     };
+
+    let resolveMediaReady: () => void;
+    const mediaReadyPromise = new Promise<void>((resolve) => {
+      resolveMediaReady = resolve;
+    });
 
     // Démarrage des médias locaux et signalisation
     async function initCall() {
@@ -177,9 +197,15 @@ export function ActiveCallRoom({
             pc.addTrack(track, mediaStream!);
           });
         }
+      } catch (err) {
+        console.error('Erreur accès média / WebRTC :', err);
+      } finally {
+        resolveMediaReady();
+      }
 
-        // Si l'utilisateur est l'appelant, il crée l'offre WebRTC
-        if (isInitiator) {
+      // Si l'utilisateur est l'appelant, il crée l'offre WebRTC
+      if (isInitiator) {
+        try {
           const offer = await pc.createOffer({
             offerToReceiveAudio: true,
             offerToReceiveVideo: callType === 'video',
@@ -193,9 +219,9 @@ export function ActiveCallRoom({
             callType,
             ambience,
           });
+        } catch (offerErr) {
+          console.error('Erreur création offer :', offerErr);
         }
-      } catch (err) {
-        console.error('Erreur accès média / WebRTC :', err);
       }
     }
 
@@ -208,6 +234,9 @@ export function ActiveCallRoom({
 
       try {
         if (signal.type === 'offer' && !isInitiator) {
+          // Attendre impérativement que les pistes locales soient capturées et ajoutées au PC avant de générer la réponse
+          await mediaReadyPromise;
+
           await currentPc.setRemoteDescription(new RTCSessionDescription(signal.payload));
           await processPendingIceCandidates();
 
