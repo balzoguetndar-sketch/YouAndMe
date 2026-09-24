@@ -40,24 +40,29 @@ export function ActiveCallRoom({
   const supabase = createClient();
   const roomId = [callerEmail, receiverEmail].sort().join('__').replace(/[^a-zA-Z0-9_-]/g, '_');
 
-  // 1. Récupération du réglage administrateur pour l'affichage des tarifs en salle
+  // 1. Récupération & écoute en direct du réglage administrateur pour l'affichage des tarifs en salle
   useEffect(() => {
-    async function checkPricingSetting() {
-      try {
-        const { data } = await supabase
-          .from('system_settings')
-          .select('value')
-          .eq('key', 'show_pricing_in_room')
-          .single();
-
-        if (data) {
-          setShowPricingSetting(data.value === 'true');
-        }
-      } catch (err) {
-        setShowPricingSetting(true);
+    // Vérification initiale locale
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('yam_show_pricing_in_room');
+      if (saved !== null) {
+        setShowPricingSetting(saved === 'true');
       }
     }
-    checkPricingSetting();
+
+    // Écoute en direct des changements diffusés par l'administrateur
+    const channel = supabase.channel('yam_admin_settings');
+    channel
+      .on('broadcast', { event: 'pricing_toggle' }, (payload) => {
+        if (payload?.payload?.showPricing !== undefined) {
+          setShowPricingSetting(Boolean(payload.payload.showPricing));
+        }
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, [supabase]);
 
   // 2. Initialisation WebRTC complète avec file d'attente ICE Candidate sécurisée

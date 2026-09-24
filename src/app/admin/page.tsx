@@ -40,111 +40,124 @@ export default async function AdminPage() {
     .select('*')
     .order('created_at', { ascending: false });
 
+  // Calcul des métriques clés
+  const totalLogs = logs?.length || 0;
+  const uniqueUsers = new Set(logs?.map((l) => l.email?.toLowerCase().trim())).size;
+  const activeBannersCount = banners?.filter((b) => b.active).length || 0;
+  const totalRevenue = banners?.filter((b) => b.payment_status === 'paid').reduce((acc, b) => acc + (b.amount_due || 0), 0) || 0;
+
   return (
-    <div className="mx-auto max-w-6xl p-6 space-y-10 text-slate-100">
+    <div className="mx-auto max-w-6xl p-4 sm:p-6 space-y-8 text-slate-100">
       {/* En-tête de la page administrateur */}
-      <div className="border-b border-slate-800 pb-4 flex items-center justify-between">
+      <div className="border-b border-slate-800 pb-5 flex flex-wrap items-center justify-between gap-4">
         <div>
-          <h1 className="text-3xl font-extrabold text-indigo-400">Panneau Administrateur</h1>
-          <p className="text-sm text-slate-400">
-            Connecté en tant que <strong className="text-slate-200">{userEmail}</strong>
+          <div className="flex items-center gap-2">
+            <h1 className="text-2xl sm:text-3xl font-extrabold text-indigo-400">
+              Panneau Administrateur You&Me
+            </h1>
+            <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-indigo-950 text-indigo-300 border border-indigo-800">
+              Superadmin
+            </span>
+          </div>
+          <p className="text-xs sm:text-sm text-slate-400 mt-1">
+            Session active vérifiée pour : <strong className="text-slate-200">{userEmail}</strong>
           </p>
         </div>
+
         <div className="flex items-center gap-3">
           <a
             href="/"
-            className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold border border-slate-700 transition-all"
+            className="px-4 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-200 text-xs font-bold border border-slate-800 transition-all flex items-center gap-1.5"
           >
-            ← Retour à l'espace utilisateur
+            <span>📱</span> Espace Utilisateur
           </a>
           <LogoutButton />
         </div>
       </div>
 
-      {/* Section Paramètres Globaux du Système */}
-      <section className="space-y-4">
-        <h2 className="text-xl font-bold text-slate-200">Paramètres de la Plateforme</h2>
+      {/* Cartes Métriques KPIs */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-1 shadow-lg">
+          <p className="text-xs text-slate-400 font-medium">Connexions Totales</p>
+          <p className="text-2xl font-extrabold text-indigo-300">{totalLogs}</p>
+        </div>
+
+        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-1 shadow-lg">
+          <p className="text-xs text-slate-400 font-medium">Utilisateurs Uniques</p>
+          <p className="text-2xl font-extrabold text-emerald-300">{uniqueUsers}</p>
+        </div>
+
+        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-1 shadow-lg">
+          <p className="text-xs text-slate-400 font-medium">Bannières En Ligne</p>
+          <p className="text-2xl font-extrabold text-amber-300">{activeBannersCount}</p>
+        </div>
+
+        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-1 shadow-lg">
+          <p className="text-xs text-slate-400 font-medium">Revenus Encaissés</p>
+          <p className="text-2xl font-extrabold text-purple-300">{totalRevenue} €</p>
+        </div>
+      </div>
+
+      {/* Section 1 : Commutateur de la Grille Tarifaire */}
+      <section className="space-y-3">
+        <h2 className="text-base sm:text-lg font-bold text-slate-200 flex items-center gap-2">
+          <span>⚙️</span> Paramètres Globaux
+        </h2>
         <PricingToggle />
       </section>
 
-      {/* Section 0 : Lancement d'appel Administrateur */}
-      <section className="space-y-6">
-        <h2 className="text-xl font-bold text-slate-200">Espace d'appel Administrateur</h2>
+      {/* Section 2 : Espace d'appel Administrateur */}
+      <section className="space-y-4">
+        <h2 className="text-base sm:text-lg font-bold text-slate-200 flex items-center gap-2">
+          <span>📹</span> Espace d'Appel Administrateur & Tests
+        </h2>
         <div className="grid gap-6 lg:grid-cols-2 items-start">
           <CallLauncher />
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 shadow-xl">
-            <h3 className="text-sm font-semibold text-slate-300 text-center mb-4">
-              Test rapide caméra / microphone
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-xl space-y-3">
+            <h3 className="text-xs font-bold text-slate-300 text-center uppercase tracking-wider">
+              Test local caméra & microphone
             </h3>
             <VideoRoom />
           </div>
         </div>
       </section>
 
-      {/* Section 1 : Bannières publicitaires & Facturation */}
-      <section className="space-y-6">
-        <h2 className="text-xl font-bold text-slate-200">Gestion des Bannières & Factures</h2>
+      {/* Section 3 : Gestion Complète des Bannières Publicitaires & Factures */}
+      <section className="space-y-4">
+        <h2 className="text-base sm:text-lg font-bold text-slate-200 flex items-center gap-2">
+          <span>📢</span> Gestion des Bannières Publicitaires & Factures
+        </h2>
         <BannerManager />
-
-        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-4">
-          <h3 className="text-sm font-semibold text-slate-300">Bannières enregistrées</h3>
-          <div className="grid gap-4 md:grid-cols-3">
-            {banners && banners.length > 0 ? (
-              banners.map((banner) => (
-                <div key={banner.id} className="bg-slate-950 border border-slate-800 rounded-xl p-4 space-y-3">
-                  <img src={banner.image_url} alt={banner.title} className="w-full h-28 object-cover rounded-lg" />
-                  <div>
-                    <p className="font-semibold text-sm truncate">{banner.title}</p>
-                    <p className="text-xs text-slate-400">Annonceur : {banner.advertiser_email}</p>
-                    <p className="text-xs text-slate-400">
-                      Durée : {banner.duration_value} {banner.duration_type}(s) — {banner.amount_due} €
-                    </p>
-                  </div>
-                  <div className="flex items-center justify-between text-xs pt-2 border-t border-slate-800">
-                    <span className={`px-2 py-0.5 rounded-full border ${
-                      banner.payment_status === 'paid'
-                        ? 'bg-emerald-950 text-emerald-400 border-emerald-800'
-                        : 'bg-amber-950 text-amber-400 border-amber-800'
-                    }`}>
-                      {banner.payment_status === 'paid' ? 'Payé' : 'En attente'}
-                    </span>
-                    <span className={`px-2 py-0.5 rounded-full border ${
-                      banner.active
-                        ? 'bg-indigo-950 text-indigo-400 border-indigo-800'
-                        : 'bg-slate-900 text-slate-500 border-slate-800'
-                    }`}>
-                      {banner.active ? 'En ligne' : 'Hors ligne'}
-                    </span>
-                  </div>
-                </div>
-              ))
-            ) : (
-              <p className="text-xs text-slate-500 italic col-span-3">Aucune bannière enregistrée pour le moment.</p>
-            )}
-          </div>
-        </div>
       </section>
 
-      {/* Section 2 : Journaux de connexions */}
+      {/* Section 4 : Journaux de connexions (Logs) */}
       <section className="space-y-4">
-        <h2 className="text-xl font-bold text-slate-200">Historique des connexions (Logs)</h2>
+        <div className="flex items-center justify-between">
+          <h2 className="text-base sm:text-lg font-bold text-slate-200 flex items-center gap-2">
+            <span>📋</span> Historique des Connexions (Logs IP)
+          </h2>
+          <span className="text-xs text-slate-400">
+            {totalLogs} session(s) enregistrée(s)
+          </span>
+        </div>
+
         <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-xl">
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto max-h-96">
             <table className="w-full text-left text-sm text-slate-300">
-              <thead className="bg-slate-950 text-xs uppercase text-slate-400 border-b border-slate-800">
+              <thead className="bg-slate-950 text-xs uppercase text-slate-400 border-b border-slate-800 sticky top-0">
                 <tr>
-                  <th className="px-6 py-4">Utilisateur</th>
-                  <th className="px-6 py-4">Adresse IP</th>
-                  <th className="px-6 py-4">Début de connexion</th>
+                  <th className="px-6 py-3.5">Utilisateur</th>
+                  <th className="px-6 py-3.5">Adresse IP</th>
+                  <th className="px-6 py-3.5">Date & Heure de connexion</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-800">
                 {logs && logs.length > 0 ? (
                   logs.map((log) => (
                     <tr key={log.id} className="hover:bg-slate-800/40 transition-colors">
-                      <td className="px-6 py-4 font-medium text-indigo-300">{log.email}</td>
-                      <td className="px-6 py-4 font-mono text-xs text-slate-400">{log.ip_address}</td>
-                      <td className="px-6 py-4 text-xs text-slate-400">
+                      <td className="px-6 py-3.5 font-semibold text-indigo-300">{log.email}</td>
+                      <td className="px-6 py-3.5 font-mono text-xs text-slate-400">{log.ip_address}</td>
+                      <td className="px-6 py-3.5 text-xs text-slate-400">
                         {new Date(log.connected_at).toLocaleString('fr-FR')}
                       </td>
                     </tr>
@@ -152,7 +165,7 @@ export default async function AdminPage() {
                 ) : (
                   <tr>
                     <td colSpan={3} className="px-6 py-8 text-center text-slate-500">
-                      Aucune connexion enregistrée.
+                      Aucune connexion enregistrée pour le moment.
                     </td>
                   </tr>
                 )}
