@@ -289,13 +289,6 @@ export default function HomePage() {
             >
               {showLocalTest ? '✕ Masquer le test' : '🎥 Démarrer un test local'}
             </button>
-
-            <button
-              onClick={handleLogout}
-              className="text-xs px-3.5 py-2 rounded-xl bg-red-950/70 hover:bg-red-900 text-red-300 border border-red-800 font-semibold transition-all cursor-pointer"
-            >
-              Déconnexion
-            </button>
           </div>
         </div>
 

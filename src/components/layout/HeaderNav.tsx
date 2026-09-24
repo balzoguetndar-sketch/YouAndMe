@@ -60,15 +60,26 @@ export function HeaderNav() {
     );
   }
 
+  const isAdmin = email === 'adiopasedikh@gmail.com';
+
   return (
     <div className="flex items-center gap-3">
+      {isAdmin && (
+        <a
+          href="/admin"
+          className="text-xs font-bold px-2.5 py-1 rounded-lg bg-indigo-950 text-indigo-300 border border-indigo-800 hover:bg-indigo-900 transition-all"
+        >
+          👑 Panneau Admin
+        </a>
+      )}
+
       <span className="text-xs text-slate-300 font-medium hidden sm:inline truncate max-w-[200px]">
         {email}
       </span>
 
       <button
         onClick={handleLogout}
-        className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-red-950/80 hover:bg-red-900 text-red-200 border border-red-800 transition-all focus:outline-none focus:ring-2 focus:ring-red-500 cursor-pointer"
+        className="text-xs font-bold px-3.5 py-1.5 rounded-xl bg-red-600 hover:bg-red-500 text-white shadow-md transition-all focus:outline-none focus:ring-2 focus:ring-red-500 cursor-pointer"
       >
         Déconnexion
       </button>

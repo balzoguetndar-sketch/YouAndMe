@@ -3,9 +3,9 @@ import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { CallLauncher } from '@/src/components/call/CallLauncher';
 import { VideoRoom } from '@/src/components/call/VideoRoom';
-import { LogoutButton } from './LogoutButton';
 import { BannerManager } from '@/src/app/admin/BannerManager';
 import { PricingToggle } from '@/src/app/admin/PricingToggle';
+import { LogManager } from '@/src/app/admin/LogManager';
 
 export default async function AdminPage() {
   const supabase = await createClient();
@@ -67,11 +67,10 @@ export default async function AdminPage() {
         <div className="flex items-center gap-3">
           <a
             href="/"
-            className="px-4 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-200 text-xs font-bold border border-slate-800 transition-all flex items-center gap-1.5"
+            className="px-4 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-200 text-xs font-bold border border-slate-800 transition-all flex items-center gap-1.5 shadow-md"
           >
-            <span>📱</span> Espace Utilisateur
+            <span>📱</span> Basculer vers l'Espace Utilisateur
           </a>
-          <LogoutButton />
         </div>
       </div>
 
@@ -130,49 +129,12 @@ export default async function AdminPage() {
         <BannerManager />
       </section>
 
-      {/* Section 4 : Journaux de connexions (Logs) */}
+      {/* Section 4 : Gestion & Purge des Journaux de Connexions */}
       <section className="space-y-4">
-        <div className="flex items-center justify-between">
-          <h2 className="text-base sm:text-lg font-bold text-slate-200 flex items-center gap-2">
-            <span>📋</span> Historique des Connexions (Logs IP)
-          </h2>
-          <span className="text-xs text-slate-400">
-            {totalLogs} session(s) enregistrée(s)
-          </span>
-        </div>
-
-        <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-xl">
-          <div className="overflow-x-auto max-h-96">
-            <table className="w-full text-left text-sm text-slate-300">
-              <thead className="bg-slate-950 text-xs uppercase text-slate-400 border-b border-slate-800 sticky top-0">
-                <tr>
-                  <th className="px-6 py-3.5">Utilisateur</th>
-                  <th className="px-6 py-3.5">Adresse IP</th>
-                  <th className="px-6 py-3.5">Date & Heure de connexion</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-800">
-                {logs && logs.length > 0 ? (
-                  logs.map((log) => (
-                    <tr key={log.id} className="hover:bg-slate-800/40 transition-colors">
-                      <td className="px-6 py-3.5 font-semibold text-indigo-300">{log.email}</td>
-                      <td className="px-6 py-3.5 font-mono text-xs text-slate-400">{log.ip_address}</td>
-                      <td className="px-6 py-3.5 text-xs text-slate-400">
-                        {new Date(log.connected_at).toLocaleString('fr-FR')}
-                      </td>
-                    </tr>
-                  ))
-                ) : (
-                  <tr>
-                    <td colSpan={3} className="px-6 py-8 text-center text-slate-500">
-                      Aucune connexion enregistrée pour le moment.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
+        <h2 className="text-base sm:text-lg font-bold text-slate-200 flex items-center gap-2">
+          <span>📋</span> Gestion de l'Historique & Purge des Logs
+        </h2>
+        <LogManager />
       </section>
     </div>
   );
