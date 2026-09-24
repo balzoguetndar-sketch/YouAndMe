@@ -34,6 +34,23 @@ export function BannerManager() {
 
   const supabase = createClient();
 
+  const handleImageFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      if (file.size > 2 * 1024 * 1024) {
+        alert('Veuillez sélectionner une image de moins de 2 Mo.');
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        if (event.target?.result) {
+          setImageUrl(event.target.result as string);
+        }
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
   const fetchBanners = async () => {
     try {
       const { data, error } = await supabase
@@ -57,6 +74,12 @@ export function BannerManager() {
 
   const handleCreateBannerAndInvoice = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    if (!imageUrl || imageUrl.startsWith('C:\\') || imageUrl.startsWith('/')) {
+      alert('Veuillez sélectionner un fichier image ou saisir une URL web valide (https://...).');
+      return;
+    }
+
     setLoadingSubmit(true);
 
     const { error } = await supabase.from('banners').insert([
@@ -76,7 +99,7 @@ export function BannerManager() {
     setLoadingSubmit(false);
 
     if (error) {
-      alert(`Erreur lors de la création : ${error.message}`);
+      alert(`Erreur lors de la création : ${error.message}\n\nNote : Vérifiez que la règle RLS sur la table "banners" autorise l'insertion dans Supabase.`);
     } else {
       alert(`✅ Bannière et facture enregistrées avec succès pour ${advertiserEmail}.`);
       setTitle('');
@@ -173,26 +196,50 @@ export function BannerManager() {
           </div>
 
           <div className="grid gap-4 md:grid-cols-2">
-            <div>
-              <label className="block text-xs font-semibold text-slate-300">URL de l'image</label>
-              <input
-                type="url"
-                required
-                value={imageUrl}
-                onChange={(e) => setImageUrl(e.target.value)}
-                placeholder="https://images.unsplash.com/..."
-                className="mt-1 w-full rounded-xl bg-slate-950 border border-slate-800 px-3 py-2.5 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-indigo-500"
-              />
+            <div className="space-y-2">
+              <label className="block text-xs font-semibold text-slate-300">
+                Image de la bannière (Fichier local ou URL Web)
+              </label>
+              
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  required
+                  value={imageUrl}
+                  onChange={(e) => setImageUrl(e.target.value)}
+                  placeholder="https://... ou choisissez un fichier ci-contre"
+                  className="flex-1 rounded-xl bg-slate-950 border border-slate-800 px-3 py-2.5 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-indigo-500"
+                />
+
+                <label className="px-3 py-2.5 rounded-xl bg-indigo-950 text-indigo-300 border border-indigo-800 hover:bg-indigo-900 text-xs font-bold cursor-pointer transition-all flex items-center gap-1">
+                  <span>📁</span> Parcourir
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={handleImageFileChange}
+                    className="hidden"
+                  />
+                </label>
+              </div>
+
+              {imageUrl && (
+                <div className="relative h-20 w-full rounded-xl overflow-hidden border border-slate-800 bg-slate-950">
+                  <img src={imageUrl} alt="Aperçu" className="w-full h-full object-cover" />
+                  <span className="absolute bottom-1 right-1 px-2 py-0.5 rounded text-[10px] bg-slate-900/90 text-slate-300 border border-slate-700">
+                    Aperçu
+                  </span>
+                </div>
+              )}
             </div>
 
-            <div>
+            <div className="space-y-2">
               <label className="block text-xs font-semibold text-slate-300">Lien cible (Clic)</label>
               <input
-                type="url"
+                type="text"
                 value={targetUrl}
                 onChange={(e) => setTargetUrl(e.target.value)}
-                placeholder="https://site-annonceur.com"
-                className="mt-1 w-full rounded-xl bg-slate-950 border border-slate-800 px-3 py-2.5 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-indigo-500"
+                placeholder="https://youandme.cloud"
+                className="mt-1 w-full rounded-xl bg-slate-950 border border-slate-800 px-3 py-2.5 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-indigo-500"
               />
             </div>
           </div>
