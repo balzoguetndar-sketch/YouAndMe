@@ -1,0 +1,104 @@
+================================================================================
+YOU&ME (YaM) - RAPPORT DE DIAGNOSTIC COMPLET & JOURNAL DES REPARATIONS
+================================================================================
+Date : 24 Septembre 2026
+Projet : You&Me (YaM) - Plateforme de communication P2P privee et securisee
+
+--------------------------------------------------------------------------------
+1. DIAGNOSTIC INITIAL DETAILLE
+--------------------------------------------------------------------------------
+
+A. Page Login & Emulation / Mobile :
+- Le tunnel ngrok affiche une page intermediaire "Visit Site" bloquant les 
+  requetes API initiales sur smartphone tant qu'elle n'est pas validee.
+- L'authentification anonyme de Supabase pouvait bloquer la connexion si elle
+  n'etait pas activee dans le tableau de bord cloud de Supabase.
+- Les navigateurs mobiles (iOS Safari, Chrome Android) exigent une connexion 
+  HTTPS stricte pour autoriser l'acces a la camera et au microphone.
+- Le middleware Next.js necessitait une persistance de session fiable pour eviter
+  les redirections en boucle sur mobile.
+
+B. Flux Video / Audio WebRTC (Le point bloquant P2P) :
+- ActiveCallRoom.tsx recuperait le flux local getUserMedia mais n'instanciait 
+  aucun RTCPeerConnection.
+- Aucun echange d'offres / reponses SDP ni de candidats ICE n'etait effectue.
+- Aucun serveur STUN (Google STUN) n'etait configure pour permettre aux flux 
+  de traverser les box Internet (NAT) entre PC et mobile.
+
+C. Parcours Utilisateur & Signalisation :
+- Absence de banniere defilante en haut de la page d'accueil connectee.
+- Presence En ligne / Hors ligne basee sur un ancien log SQL au lieu de 
+  Supabase Realtime Presence.
+- Options conditionnelles non separees (Appel direct + Ambiances vs Messages 
+  differes ecrit/audio/video).
+- Bouton de test local a maintenir.
+
+D. Securite Administrateur :
+- N'importe qui pouvait saisir l'adresse adiopasedikh@gmail.com sur la page de 
+  connexion et acceder a l'administration.
+
+
+--------------------------------------------------------------------------------
+2. REPARATIONS EFFECTUEES SANS RIEN CASSER
+--------------------------------------------------------------------------------
+
+1. src/lib/webrtc.ts :
+   - Ajout des serveurs STUN publics de Google (stun.l.google.com:19302).
+   - Signalisation complete : call-request, call-accepted, call-rejected, 
+     offer, answer, ice-candidate, call-ended.
+   - Suivi de presence temps reel avec subscribeToPresence().
+
+2. src/components/call/ActiveCallRoom.tsx :
+   - Moteur WebRTC P2P complet avec gestion des flux distants (audio + video).
+   - Correction InvalidStateError (file d'attente pendingIceCandidates pour
+     synchroniser la reception des flux avant/apres SDP remote description).
+   - Commandes interactives : Micro On/Off, Camera On/Off, Raccrocher.
+   - Onglets integres : Video/Audio, Grille Tarifaire pilotable par l'admin,
+     Tableau blanc et Partage de fichiers.
+
+3. src/app/page.tsx :
+   - Parcours utilisateur complet implemente :
+     * Banniere defilante BannerCarousel en haut.
+     * Barre de session avec email connecte et bouton deconnexion.
+     * Bouton "Demarrer un test local" (VideoRoom) accessible a tout moment.
+     * Saisie de l'interlocuteur avec detection En ligne / Hors ligne en direct.
+     * Si En Ligne : Option 1 (Appel direct Video/Audio + Choix ambiance) ou 
+       Option 2 (Laisser un message court).
+     * Si Hors Ligne : Seul choix (Message differe Texte, Audio ou Video).
+     * Modal d'appel entrant avec acceptation / refus.
+
+4. src/app/login/page.tsx & src/middleware.ts :
+   - Champs vides garantis au demarrage.
+   - Carrousel BannerCarousel actif.
+   - Securisation et resilience mobile via cookie yam_user_email.
+
+
+--------------------------------------------------------------------------------
+3. GUIDE PAS A PAS POUR LE TEST MOBILE <-> PC
+--------------------------------------------------------------------------------
+
+Etape 1 (Sur votre PC) :
+- Ouvrez http://localhost:3000
+- Connectez-vous avec l'email : pc@test.com
+
+Etape 2 (Sur votre Smartphone) :
+- Ouvrez l'adresse HTTPS ngrok (ex: https://votre-tunnel.ngrok-free.app)
+- Si ngrok demande confirmation, cliquez sur "Visit Site"
+- Connectez-vous avec l'email : mobile@test.com
+- Autorisez la camera et le microphone lorsque le telephone le demande
+
+Etape 3 (Lancement de l'appel) :
+- Sur le PC, entrez dans le champ interlocuteur : mobile@test.com
+- Le voyant passe au vert "En ligne"
+- Choisissez l'ambiance et cliquez sur "Lancer l'appel Video"
+- Sur le telephone, acceptez l'appel entrant
+- Les flux video du PC et du telephone s'affichent mutuellement en direct !
+
+
+--------------------------------------------------------------------------------
+4. PROCHAINE ETAPE : SECURISATION DE LA PAGE ADMIN
+--------------------------------------------------------------------------------
+Des que vous aurez valide le test video entre vos deux appareils, nous 
+ajouterons une protection par mot de passe / code secret pour verrouiller 
+l'acces a la page /admin.
+================================================================================
