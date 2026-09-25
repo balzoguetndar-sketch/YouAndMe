@@ -1,6 +1,9 @@
 import { createClient } from '@/src/lib/supabase/server';
 import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
+import { ADMIN_EMAIL } from '@/src/lib/validation';
+import { LogoutButton } from '@/src/app/admin/LogoutButton';
+import { LiveUsersManager } from '@/src/app/admin/LiveUsersManager';
 import { CallLauncher } from '@/src/components/call/CallLauncher';
 import { VideoRoom } from '@/src/components/call/VideoRoom';
 import { BannerManager } from '@/src/app/admin/BannerManager';
@@ -22,9 +25,10 @@ export default async function AdminPage() {
   const rawCookie = cookieStore.get('yam_user_email')?.value;
   const cookieEmail = rawCookie ? decodeURIComponent(rawCookie).toLowerCase().trim() : null;
   const userEmail = (authEmail || cookieEmail || '').toLowerCase().trim();
+  const admin2FA = cookieStore.get('yam_admin_2fa')?.value;
 
-  // VERIFICATION STRICTE : Accès restreint au compte administrateur
-  if (userEmail !== 'adiopasedikh@gmail.com') {
+  // VERIFICATION STRICTE : Accès restreint au compte administrateur avec 2FA validé
+  if (userEmail !== ADMIN_EMAIL.toLowerCase() || admin2FA !== 'verified') {
     redirect('/login');
   }
 
@@ -32,7 +36,7 @@ export default async function AdminPage() {
   const { data: logs } = await supabase
     .from('connection_logs')
     .select('*')
-    .order('connected_at', { ascending: false });
+    .order('created_at', { ascending: false });
 
   // Récupération des bannières
   const { data: banners } = await supabase
@@ -71,6 +75,7 @@ export default async function AdminPage() {
           >
             <span>📱</span> Basculer vers l'Espace Utilisateur
           </a>
+          <LogoutButton />
         </div>
       </div>
 
@@ -105,7 +110,12 @@ export default async function AdminPage() {
         <PricingToggle />
       </section>
 
-      {/* Section 2 : Espace d'appel Administrateur */}
+      {/* Section 2 : Utilisateurs Connectés en Direct */}
+      <section className="space-y-3">
+        <LiveUsersManager adminEmail={userEmail} />
+      </section>
+
+      {/* Section 3 : Espace d'appel Administrateur */}
       <section className="space-y-4">
         <h2 className="text-base sm:text-lg font-bold text-slate-200 flex items-center gap-2">
           <span>📹</span> Espace d'Appel Administrateur & Tests
@@ -121,7 +131,7 @@ export default async function AdminPage() {
         </div>
       </section>
 
-      {/* Section 3 : Gestion Complète des Bannières Publicitaires & Factures */}
+      {/* Section 4 : Gestion Complète des Bannières Publicitaires & Factures */}
       <section className="space-y-4">
         <h2 className="text-base sm:text-lg font-bold text-slate-200 flex items-center gap-2">
           <span>📢</span> Gestion des Bannières Publicitaires & Factures
@@ -129,7 +139,7 @@ export default async function AdminPage() {
         <BannerManager />
       </section>
 
-      {/* Section 4 : Gestion & Purge des Journaux de Connexions */}
+      {/* Section 5 : Gestion & Purge des Journaux de Connexions */}
       <section className="space-y-4">
         <h2 className="text-base sm:text-lg font-bold text-slate-200 flex items-center gap-2">
           <span>📋</span> Gestion de l'Historique & Purge des Logs

@@ -12,6 +12,7 @@ import {
   sendSignal,
   SignalData,
 } from '@/src/lib/webrtc';
+import { soundManager } from '@/src/lib/sound';
 
 type Ambience = 'neutral' | 'love' | 'family' | 'couple' | 'friendship';
 type CallType = 'video' | 'audio';
@@ -97,20 +98,28 @@ export default function HomePage() {
           ambience: signal.ambience || 'neutral',
         });
       } else if (signal.type === 'call-accepted') {
+        soundManager.stop();
         setIsInCall(true);
       } else if (signal.type === 'call-rejected') {
+        soundManager.stop();
         alert(`${targetEmail || 'Votre interlocuteur'} a décliné l'appel.`);
         setIsInCall(false);
+      } else if (signal.type === 'call-ended') {
+        soundManager.stop();
+        setIsInCall(false);
+        setIncomingCall(null);
       }
     });
 
     return () => {
       unsubscribePresence();
       unsubscribeSignals();
+      soundManager.stop();
     };
   }, [currentUserEmail, targetEmail]);
 
   const handleLogout = async () => {
+    soundManager.stop();
     try {
       await supabase.auth.signOut();
     } catch (e) {}
@@ -148,6 +157,7 @@ export default function HomePage() {
   const handleAcceptIncomingCall = async () => {
     if (!incomingCall || !currentUserEmail) return;
 
+    soundManager.stop();
     setTargetEmail(incomingCall.callerEmail);
     setCallType(incomingCall.callType);
     setAmbience(incomingCall.ambience as Ambience);
@@ -167,13 +177,15 @@ export default function HomePage() {
   const handleRejectIncomingCall = async () => {
     if (!incomingCall || !currentUserEmail) return;
 
-    await sendSignal(incomingCall.callerEmail, {
+    soundManager.stop();
+    const caller = incomingCall.callerEmail;
+    setIncomingCall(null);
+
+    await sendSignal(caller, {
       type: 'call-rejected',
       sender: currentUserEmail,
-      target: incomingCall.callerEmail,
+      target: caller,
     });
-
-    setIncomingCall(null);
   };
 
   // Enregistrement Mémo Audio / Vidéo différé

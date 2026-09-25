@@ -7,7 +7,8 @@ type ConnectionLog = {
   id: string;
   email: string;
   ip_address: string;
-  connected_at: string;
+  created_at: string;
+  connected_at?: string | null;
   disconnected_at?: string | null;
 };
 
@@ -28,7 +29,7 @@ export function LogManager() {
       const { data, error } = await supabase
         .from('connection_logs')
         .select('*')
-        .order('connected_at', { ascending: false });
+        .order('created_at', { ascending: false });
 
       if (!error && data) {
         setLogs(data);
@@ -42,6 +43,24 @@ export function LogManager() {
 
   useEffect(() => {
     fetchLogs();
+
+    // Écoute des nouvelles connexions en temps réel
+    const channel = supabase
+      .channel('connection_logs_realtime')
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'connection_logs' },
+        (payload) => {
+          if (payload.new) {
+            setLogs((prev) => [payload.new as ConnectionLog, ...prev]);
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, [supabase]);
 
   const showFeedback = (text: string, type: 'success' | 'error' = 'success') => {
@@ -59,7 +78,7 @@ export function LogManager() {
     const { error } = await supabase
       .from('connection_logs')
       .delete()
-      .lt('connected_at', twentyFourHoursAgo);
+      .lt('created_at', twentyFourHoursAgo);
 
     setPurging(false);
 
@@ -94,8 +113,8 @@ export function LogManager() {
     const { error } = await supabase
       .from('connection_logs')
       .delete()
-      .gte('connected_at', startISO)
-      .lte('connected_at', endISO);
+      .gte('created_at', startISO)
+      .lte('created_at', endISO);
 
     setPurging(false);
 
@@ -268,15 +287,18 @@ export function LogManager() {
                   </td>
                 </tr>
               ) : filteredLogs.length > 0 ? (
-                filteredLogs.map((log) => (
-                  <tr key={log.id} className="hover:bg-slate-800/40 transition-colors">
-                    <td className="px-5 py-3 font-semibold text-indigo-300">{log.email}</td>
-                    <td className="px-5 py-3 font-mono text-xs text-slate-400">{log.ip_address}</td>
-                    <td className="px-5 py-3 text-xs text-slate-400">
-                      {new Date(log.connected_at).toLocaleString('fr-FR')}
-                    </td>
-                  </tr>
-                ))
+                filteredLogs.map((log) => {
+                  const timestamp = log.created_at || log.connected_at;
+                  return (
+                    <tr key={log.id} className="hover:bg-slate-800/40 transition-colors">
+                      <td className="px-5 py-3 font-semibold text-indigo-300">{log.email}</td>
+                      <td className="px-5 py-3 font-mono text-xs text-slate-400">{log.ip_address}</td>
+                      <td className="px-5 py-3 text-xs text-slate-400">
+                        {timestamp ? new Date(timestamp).toLocaleString('fr-FR') : 'Date inconnue'}
+                      </td>
+                    </tr>
+                  );
+                })
               ) : (
                 <tr>
                   <td colSpan={3} className="px-5 py-8 text-center text-slate-500 italic">

@@ -1,4 +1,5 @@
 import { createClient } from '@/src/lib/supabase/clients';
+import type { RealtimeChannel } from '@supabase/supabase-js';
 
 export type SignalType =
   | 'call-request'
@@ -39,7 +40,16 @@ export function subscribeToSignals(
 ) {
   const cleanEmail = userEmail.toLowerCase().trim().replace(/[^a-zA-Z0-9_-]/g, '_');
   const supabase = createClient();
-  const channel = supabase.channel(`webrtc_${cleanEmail}`);
+  const channelName = `webrtc_${cleanEmail}`;
+
+  // Nettoie un ancien canal s'il existait déjà pour éviter les doublons de souscription
+  const existingChannels = supabase.getChannels();
+  const found = existingChannels.find((ch) => ch.topic === `realtime:${channelName}`);
+  if (found) {
+    supabase.removeChannel(found);
+  }
+
+  const channel = supabase.channel(channelName);
 
   channel
     .on('broadcast', { event: 'signal' }, (payload) => {
@@ -60,7 +70,9 @@ export function subscribeToSignals(
 export async function sendSignal(targetEmail: string, signal: SignalData) {
   const cleanTarget = targetEmail.toLowerCase().trim().replace(/[^a-zA-Z0-9_-]/g, '_');
   const supabase = createClient();
-  const channel = supabase.channel(`webrtc_${cleanTarget}`);
+  const channelName = `webrtc_${cleanTarget}`;
+
+  const channel = supabase.channel(channelName);
 
   await channel.subscribe();
   await channel.send({
@@ -69,6 +81,11 @@ export async function sendSignal(targetEmail: string, signal: SignalData) {
     payload: signal,
   });
 }
+
+// Gestionnaire Singleton de présence pour partager la même connexion WebSocket entre plusieurs composants
+let sharedPresenceChannel: RealtimeChannel | null = null;
+const presenceListeners = new Set<(onlineUsers: Set<string>) => void>();
+let trackedUserEmail: string | null = null;
 
 /**
  * Suivi de présence en temps réel (En ligne / Hors ligne)
@@ -79,38 +96,89 @@ export function subscribeToPresence(
 ) {
   const cleanMyEmail = myEmail.toLowerCase().trim();
   const supabase = createClient();
-  const channel = supabase.channel('yam_presence_room', {
-    config: {
-      presence: {
-        key: cleanMyEmail,
-      },
-    },
-  });
 
-  const updateState = () => {
-    const state = channel.presenceState();
+  presenceListeners.add(onPresenceUpdate);
+
+  const notifyAll = (state: Record<string, any[]>) => {
     const onlineSet = new Set<string>();
     Object.keys(state).forEach((key) => {
       onlineSet.add(key.toLowerCase().trim());
     });
-    onPresenceUpdate(onlineSet);
-  };
-
-  channel
-    .on('presence', { event: 'sync' }, updateState)
-    .on('presence', { event: 'join' }, updateState)
-    .on('presence', { event: 'leave' }, updateState)
-    .subscribe(async (status) => {
-      if (status === 'SUBSCRIBED' && cleanMyEmail) {
-        await channel.track({
-          email: cleanMyEmail,
-          onlineAt: new Date().toISOString(),
-        });
+    presenceListeners.forEach((listener) => {
+      try {
+        listener(onlineSet);
+      } catch (err) {
+        console.warn('Erreur listener présence :', err);
       }
     });
+  };
+
+  // Si le canal n'est pas encore créé, on l'initialise
+  if (!sharedPresenceChannel) {
+    trackedUserEmail = cleanMyEmail;
+
+    // Supprime un canal orphelin préexistant s'il y en a un dans l'instance
+    const existingChannels = supabase.getChannels();
+    const existing = existingChannels.find((ch) => ch.topic === 'realtime:yam_presence_room');
+    if (existing) {
+      supabase.removeChannel(existing);
+    }
+
+    sharedPresenceChannel = supabase.channel('yam_presence_room', {
+      config: {
+        presence: {
+          key: cleanMyEmail,
+        },
+      },
+    });
+
+    const updateState = () => {
+      if (sharedPresenceChannel) {
+        const state = sharedPresenceChannel.presenceState();
+        notifyAll(state);
+      }
+    };
+
+    sharedPresenceChannel
+      .on('presence', { event: 'sync' }, updateState)
+      .on('presence', { event: 'join' }, updateState)
+      .on('presence', { event: 'leave' }, updateState)
+      .subscribe(async (status) => {
+        if (status === 'SUBSCRIBED' && cleanMyEmail && sharedPresenceChannel) {
+          try {
+            await sharedPresenceChannel.track({
+              email: cleanMyEmail,
+              onlineAt: new Date().toISOString(),
+            });
+          } catch (trackErr) {
+            console.warn('Track presence ignoré :', trackErr);
+          }
+        }
+      });
+  } else {
+    // Si le canal est déjà souscrit, on transmet immédiatement l'état actuel au nouveau composant
+    try {
+      const currentState = sharedPresenceChannel.presenceState();
+      if (currentState && Object.keys(currentState).length > 0) {
+        const onlineSet = new Set<string>();
+        Object.keys(currentState).forEach((key) => {
+          onlineSet.add(key.toLowerCase().trim());
+        });
+        onPresenceUpdate(onlineSet);
+      }
+    } catch {}
+  }
 
   return () => {
-    channel.untrack().catch(() => { });
-    supabase.removeChannel(channel);
+    presenceListeners.delete(onPresenceUpdate);
+    // On ne ferme le canal que si aucun composant n'écoute plus la présence
+    if (presenceListeners.size === 0 && sharedPresenceChannel) {
+      try {
+        sharedPresenceChannel.untrack().catch(() => {});
+        supabase.removeChannel(sharedPresenceChannel);
+      } catch {}
+      sharedPresenceChannel = null;
+      trackedUserEmail = null;
+    }
   };
 }
