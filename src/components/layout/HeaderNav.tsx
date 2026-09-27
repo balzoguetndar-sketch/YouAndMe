@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { createClient } from '@/src/lib/supabase/clients';
+import { ADMIN_EMAIL } from '@/src/lib/validation';
 
 export function HeaderNav() {
   const [email, setEmail] = useState<string | null>(null);
@@ -60,7 +61,7 @@ export function HeaderNav() {
     );
   }
 
-  const isAdmin = email === 'adiopasedikh@gmail.com';
+  const isAdmin = email.toLowerCase().trim() === ADMIN_EMAIL.toLowerCase().trim();
 
   return (
     <div className="flex items-center gap-3">

@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { createClient } from '@/src/lib/supabase/clients';
 import { ICE_SERVERS, sendSignal, subscribeToSignals, SignalData } from '@/src/lib/webrtc';
+import { soundManager } from '@/src/lib/sound';
 import { PricingPlans } from '@/src/components/subscription/PricingPlans';
 import { Whiteboard } from '@/src/components/collaboration/Whiteboard';
 import { FileShare } from '@/src/components/collaboration/FileShare';
@@ -108,6 +109,7 @@ export function ActiveCallRoom({
         remoteVideoRef.current.play().catch(() => {});
       }
 
+      soundManager.stop();
       if (isMounted) {
         setRemoteStreamReceived(true);
         setConnectionStatus('connected');
@@ -272,6 +274,7 @@ export function ActiveCallRoom({
 
     return () => {
       isMounted = false;
+      soundManager.stop();
       unsubscribeSignals();
       if (localStreamRef.current) {
         localStreamRef.current.getTracks().forEach((t) => t.stop());

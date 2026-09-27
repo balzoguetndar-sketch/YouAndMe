@@ -13,6 +13,7 @@ import {
   SignalData,
 } from '@/src/lib/webrtc';
 import { soundManager } from '@/src/lib/sound';
+import { logUserConnection } from '@/src/lib/logger';
 
 type Ambience = 'neutral' | 'love' | 'family' | 'couple' | 'friendship';
 type CallType = 'video' | 'audio';
@@ -50,7 +51,20 @@ export default function HomePage() {
 
   const supabase = createClient();
 
-  // 1. Vérification de session et authentification
+  // 1. Déverrouillage Audio automatique au premier clic/contact
+  useEffect(() => {
+    const handleUnlock = () => {
+      soundManager.unlock();
+    };
+    window.addEventListener('click', handleUnlock, { once: true });
+    window.addEventListener('touchstart', handleUnlock, { once: true });
+    return () => {
+      window.removeEventListener('click', handleUnlock);
+      window.removeEventListener('touchstart', handleUnlock);
+    };
+  }, []);
+
+  // 2. Vérification de session et authentification
   useEffect(() => {
     const initAuth = async () => {
       let email: string | null = null;
@@ -73,14 +87,18 @@ export default function HomePage() {
         return;
       }
 
-      setCurrentUserEmail(email.toLowerCase().trim());
+      const formattedEmail = email.toLowerCase().trim();
+      setCurrentUserEmail(formattedEmail);
       setLoading(false);
+
+      // Journalisation de la présence en session
+      logUserConnection(formattedEmail).catch(() => {});
     };
 
     initAuth();
   }, [supabase]);
 
-  // 2. Gestion de la présence en temps réel et signalisation d'appels entrants
+  // 3. Gestion de la présence en temps réel et signalisation d'appels entrants
   useEffect(() => {
     if (!currentUserEmail) return;
 
@@ -139,6 +157,9 @@ export default function HomePage() {
   // Démarrer un appel direct
   const handleLaunchCall = async () => {
     if (!isValidTargetEmail || !currentUserEmail) return;
+
+    // Déclenche la tonalité d'attente sortante pour l'appelant
+    soundManager.startOutgoingRingtone();
 
     setIsInitiator(true);
     setIsInCall(true);

@@ -123,6 +123,19 @@ class SoundManager {
   }
 
   /**
+   * Pré-débloque le contexte audio lors d'un clic utilisateur pour éviter le blocage Autoplay des navigateurs
+   */
+  public unlock() {
+    if (typeof window === 'undefined') return;
+    try {
+      const ctx = this.getAudioContext();
+      if (ctx && ctx.state === 'suspended') {
+        ctx.resume().catch(() => {});
+      }
+    } catch {}
+  }
+
+  /**
    * Arrête immédiatement toute sonnerie en cours
    */
   public stop() {

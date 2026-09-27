@@ -41,10 +41,10 @@ export function validateEmail(email: string): { isValid: boolean; error?: string
   }
 
   if (!domain.includes('.')) {
-    return { 
-      isValid: false, 
-      error: `Il manque l’extension (.com, .fr, .net, etc.). Vouliez-vous écrire : ${clean}.com ?`, 
-      cleanEmail: clean 
+    return {
+      isValid: false,
+      error: `Il manque l’extension (.com, .fr, .net, etc.). Vouliez-vous écrire : ${clean}.com ?`,
+      cleanEmail: clean
     };
   }
 
@@ -52,18 +52,18 @@ export function validateEmail(email: string): { isValid: boolean; error?: string
   const tld = domainParts[domainParts.length - 1];
 
   if (!tld || tld.length < 2) {
-    return { 
-      isValid: false, 
-      error: `L’extension ".${tld}" est incomplète. Une extension valide comporte au moins 2 lettres (ex: .com, .fr, .org).`, 
-      cleanEmail: clean 
+    return {
+      isValid: false,
+      error: `L’extension ".${tld}" est incomplète. Une extension valide comporte au moins 2 lettres (ex: .com, .fr, .org).`,
+      cleanEmail: clean
     };
   }
 
   if (!/^[a-zA-Z]{2,24}$/.test(tld)) {
-    return { 
-      isValid: false, 
-      error: `L’extension ".${tld}" contient des caractères non autorisés.`, 
-      cleanEmail: clean 
+    return {
+      isValid: false,
+      error: `L’extension ".${tld}" contient des caractères non autorisés.`,
+      cleanEmail: clean
     };
   }
 
@@ -76,7 +76,7 @@ export function validateEmail(email: string): { isValid: boolean; error?: string
   return { isValid: true, cleanEmail: clean };
 }
 
-export const ADMIN_EMAIL = 'adiopasedikh@gmail.com';
+export const ADMIN_EMAIL = 'balzoguetndar@gmail.com';
 
 /**
  * Vérification du code 2FA pour l'administrateur
@@ -85,11 +85,11 @@ export const ADMIN_EMAIL = 'adiopasedikh@gmail.com';
 export function verifyAdmin2FACode(code: string): boolean {
   const cleanCode = (code || '').trim();
   const configuredPin = process.env.NEXT_PUBLIC_ADMIN_2FA_PIN || process.env.ADMIN_2FA_PIN;
-  
+
   // Accepte le code configuré ou le code par défaut
   const validCodes = [
     (configuredPin || '').trim(),
-    '849206', // Code initial
+    '690858', // Code initial
   ].filter(Boolean);
 
   return validCodes.includes(cleanCode);

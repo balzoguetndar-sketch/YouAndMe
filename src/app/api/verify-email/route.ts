@@ -79,10 +79,10 @@ export async function POST(request: Request) {
     }
 
     // 4. Détection de faute de frappe sur le compte Administrateur
-    const adminLocal = ADMIN_EMAIL.split('@')[0];
+    const adminLocal = ADMIN_EMAIL.split('@')[0].toLowerCase();
     if (
       cleanEmail !== ADMIN_EMAIL.toLowerCase() &&
-      (cleanEmail.includes('adiopasedikh') || (localPart.includes('adiop') && localPart.includes('sedikh')))
+      (cleanEmail.includes(adminLocal) || (localPart.includes('balzog') || localPart.includes('etndar')))
     ) {
       return NextResponse.json(
         {

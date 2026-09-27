@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { createClient } from '@/src/lib/supabase/clients';
 
-type ConnectionLog = {
+export type ConnectionLog = {
   id: string;
   email: string;
   ip_address: string;
@@ -12,9 +12,13 @@ type ConnectionLog = {
   disconnected_at?: string | null;
 };
 
-export function LogManager() {
-  const [logs, setLogs] = useState<ConnectionLog[]>([]);
-  const [loading, setLoading] = useState(true);
+interface LogManagerProps {
+  initialLogs?: ConnectionLog[];
+}
+
+export function LogManager({ initialLogs = [] }: LogManagerProps) {
+  const [logs, setLogs] = useState<ConnectionLog[]>(initialLogs);
+  const [loading, setLoading] = useState(initialLogs.length === 0);
   const [purging, setPurging] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [startDate, setStartDate] = useState('');
@@ -26,6 +30,18 @@ export function LogManager() {
   const fetchLogs = async () => {
     setLoading(true);
     try {
+      // 1. Appel prioritaire de l'API admin sécurisée (contourne RLS)
+      const res = await fetch('/api/admin/logs');
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data.logs)) {
+          setLogs(data.logs);
+          setLoading(false);
+          return;
+        }
+      }
+
+      // 2. Fallback direct via client Supabase
       const { data, error } = await supabase
         .from('connection_logs')
         .select('*')
@@ -42,7 +58,9 @@ export function LogManager() {
   };
 
   useEffect(() => {
-    fetchLogs();
+    if (initialLogs.length === 0) {
+      fetchLogs();
+    }
 
     // Écoute des nouvelles connexions en temps réel
     const channel = supabase
@@ -52,7 +70,11 @@ export function LogManager() {
         { event: 'INSERT', schema: 'public', table: 'connection_logs' },
         (payload) => {
           if (payload.new) {
-            setLogs((prev) => [payload.new as ConnectionLog, ...prev]);
+            setLogs((prev) => {
+              const newLog = payload.new as ConnectionLog;
+              if (prev.some((l) => l.id === newLog.id)) return prev;
+              return [newLog, ...prev];
+            });
           }
         }
       )
@@ -73,20 +95,24 @@ export function LogManager() {
     if (!confirm('Confirmez-vous la purge de tous les logs de connexion datant de plus de 24 heures ?')) return;
 
     setPurging(true);
-    const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    try {
+      const res = await fetch('/api/admin/logs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'purge24h' }),
+      });
+      const data = await res.json();
 
-    const { error } = await supabase
-      .from('connection_logs')
-      .delete()
-      .lt('created_at', twentyFourHoursAgo);
+      if (!res.ok) {
+        throw new Error(data.error || 'Erreur lors de la purge');
+      }
 
-    setPurging(false);
-
-    if (error) {
-      showFeedback(`Erreur lors de la purge : ${error.message}`, 'error');
-    } else {
       showFeedback('✅ Purge des logs > 24h effectuée avec succès.');
       fetchLogs();
+    } catch (err: any) {
+      showFeedback(`Erreur : ${err.message}`, 'error');
+    } finally {
+      setPurging(false);
     }
   };
 
@@ -98,10 +124,7 @@ export function LogManager() {
       return;
     }
 
-    const startISO = new Date(startDate + 'T00:00:00').toISOString();
-    const endISO = new Date(endDate + 'T23:59:59').toISOString();
-
-    if (new Date(startISO) > new Date(endISO)) {
+    if (new Date(startDate) > new Date(endDate)) {
       showFeedback('La date de début doit être antérieure à la date de fin.', 'error');
       return;
     }
@@ -109,22 +132,26 @@ export function LogManager() {
     if (!confirm(`Confirmez-vous la suppression des logs enregistrés entre le ${startDate} et le ${endDate} ?`)) return;
 
     setPurging(true);
+    try {
+      const res = await fetch('/api/admin/logs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'purgeRange', startDate, endDate }),
+      });
+      const data = await res.json();
 
-    const { error } = await supabase
-      .from('connection_logs')
-      .delete()
-      .gte('created_at', startISO)
-      .lte('created_at', endISO);
+      if (!res.ok) {
+        throw new Error(data.error || 'Erreur lors de la purge');
+      }
 
-    setPurging(false);
-
-    if (error) {
-      showFeedback(`Erreur lors de la purge : ${error.message}`, 'error');
-    } else {
       showFeedback(`✅ Logs du ${startDate} au ${endDate} purgés avec succès.`);
       setStartDate('');
       setEndDate('');
       fetchLogs();
+    } catch (err: any) {
+      showFeedback(`Erreur : ${err.message}`, 'error');
+    } finally {
+      setPurging(false);
     }
   };
 
@@ -133,18 +160,24 @@ export function LogManager() {
     if (!confirm('⚠️ ATTENTION : Vous allez supprimer TOUT l’historique des connexions. Cette action est irréversible. Continuer ?')) return;
 
     setPurging(true);
-    const { error } = await supabase
-      .from('connection_logs')
-      .delete()
-      .neq('id', '00000000-0000-0000-0000-000000000000'); // Supprime tout
+    try {
+      const res = await fetch('/api/admin/logs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'purgeAll' }),
+      });
+      const data = await res.json();
 
-    setPurging(false);
+      if (!res.ok) {
+        throw new Error(data.error || 'Erreur lors de la purge');
+      }
 
-    if (error) {
-      showFeedback(`Erreur : ${error.message}`, 'error');
-    } else {
       showFeedback('✅ Historique complet vidé.');
       fetchLogs();
+    } catch (err: any) {
+      showFeedback(`Erreur : ${err.message}`, 'error');
+    } finally {
+      setPurging(false);
     }
   };
 
@@ -186,6 +219,7 @@ export function LogManager() {
           </div>
 
           <button
+            type="button"
             onClick={handlePurge24h}
             disabled={purging}
             className="px-4 py-2 rounded-xl text-xs font-bold text-amber-200 bg-amber-950/70 border border-amber-800 hover:bg-amber-900 transition-all cursor-pointer shadow-md disabled:opacity-50 flex items-center gap-1.5"
@@ -252,6 +286,7 @@ export function LogManager() {
               Journaux Actifs ({filteredLogs.length} / {logs.length})
             </h3>
             <button
+              type="button"
               onClick={fetchLogs}
               className="text-xs px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 transition-all cursor-pointer"
             >
