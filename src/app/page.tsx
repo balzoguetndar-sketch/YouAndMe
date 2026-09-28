@@ -278,7 +278,17 @@ export default function HomePage() {
           isInitiator={isInitiator}
           callType={callType}
           ambience={ambience}
-          onEndCall={() => setIsInCall(false)}
+          onEndCall={() => {
+            soundManager.stop();
+            if (currentUserEmail && cleanTargetEmail) {
+              sendSignal(cleanTargetEmail, {
+                type: 'call-ended',
+                sender: currentUserEmail,
+                target: cleanTargetEmail,
+              }).catch(() => {});
+            }
+            setIsInCall(false);
+          }}
         />
       </main>
     );

@@ -16,17 +16,23 @@ export async function POST(request: Request) {
       return NextResponse.json({ success: false, error: 'Email required' }, { status: 400 });
     }
 
-    // Récupération de l'adresse IP réelle depuis les en-têtes
+    // Récupération de l'adresse IP et User-Agent réels
     const forwardedFor = request.headers.get('x-forwarded-for');
     const realIp = request.headers.get('x-real-ip');
     const clientIp = forwardedFor ? forwardedFor.split(',')[0].trim() : (realIp || '127.0.0.1');
+    const userAgent = request.headers.get('user-agent') || 'Navigateur Web';
+    const nowISO = new Date().toISOString();
 
-    // Insertion via le client administrateur
+    // Insertion via le client administrateur avec tous les champs requis par le schéma Supabase
     const { error } = await supabaseAdmin.from('connection_logs').insert([
       {
         email: email.toLowerCase().trim(),
         ip_address: clientIp,
-        created_at: new Date().toISOString(),
+        user_agent: userAgent,
+        started_at: nowISO,
+        ended_at: nowISO,
+        created_at: nowISO,
+        location: clientIp === '127.0.0.1' ? 'Local' : 'En ligne',
       },
     ]);
 

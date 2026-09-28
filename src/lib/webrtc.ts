@@ -42,43 +42,82 @@ export function subscribeToSignals(
   const supabase = createClient();
   const channelName = `webrtc_${cleanEmail}`;
 
-  // Nettoie un ancien canal s'il existait déjà pour éviter les doublons de souscription
-  const existingChannels = supabase.getChannels();
-  const found = existingChannels.find((ch) => ch.topic === `realtime:${channelName}`);
-  if (found) {
-    supabase.removeChannel(found);
-  }
-
-  const channel = supabase.channel(channelName);
+  const channel = supabase.channel(channelName, {
+    config: {
+      broadcast: { self: true },
+    },
+  });
 
   channel
     .on('broadcast', { event: 'signal' }, (payload) => {
-      if (payload.payload) {
+      if (payload && payload.payload) {
         onSignalReceived(payload.payload as SignalData);
       }
     })
     .subscribe();
 
   return () => {
-    supabase.removeChannel(channel);
+    try {
+      supabase.removeChannel(channel);
+    } catch {}
   };
 }
 
 /**
- * Envoi d'un signal WebRTC à un utilisateur cible
+ * Envoi d'un signal WebRTC à un utilisateur cible (garantit que le canal est connecté avant l'envoi)
  */
-export async function sendSignal(targetEmail: string, signal: SignalData) {
+export async function sendSignal(targetEmail: string, signal: SignalData): Promise<boolean> {
   const cleanTarget = targetEmail.toLowerCase().trim().replace(/[^a-zA-Z0-9_-]/g, '_');
   const supabase = createClient();
   const channelName = `webrtc_${cleanTarget}`;
 
-  const channel = supabase.channel(channelName);
+  return new Promise<boolean>((resolve) => {
+    let finished = false;
+    const existingChannels = supabase.getChannels();
+    let channel = existingChannels.find((ch) => ch.topic === `realtime:${channelName}`);
 
-  await channel.subscribe();
-  await channel.send({
-    type: 'broadcast',
-    event: 'signal',
-    payload: signal,
+    const transmit = async (ch: RealtimeChannel) => {
+      if (finished) return;
+      try {
+        await ch.send({
+          type: 'broadcast',
+          event: 'signal',
+          payload: signal,
+        });
+        finished = true;
+        resolve(true);
+      } catch (err) {
+        console.warn('Erreur transmission signal WebRTC :', err);
+        finished = true;
+        resolve(false);
+      }
+    };
+
+    if (channel && (channel as any).state === 'joined') {
+      transmit(channel);
+      return;
+    }
+
+    if (!channel) {
+      channel = supabase.channel(channelName, {
+        config: {
+          broadcast: { self: true },
+        },
+      });
+    }
+
+    const fallbackTimeout = setTimeout(() => {
+      if (!finished && channel) {
+        transmit(channel);
+      }
+    }, 1200);
+
+    channel.subscribe((status) => {
+      if (status === 'SUBSCRIBED' && channel) {
+        clearTimeout(fallbackTimeout);
+        transmit(channel);
+      }
+    });
   });
 }
 

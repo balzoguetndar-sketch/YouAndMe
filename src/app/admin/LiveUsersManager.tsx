@@ -2,7 +2,11 @@
 
 import { useState, useEffect } from 'react';
 import { createClient } from '@/src/lib/supabase/clients';
-import { subscribeToPresence } from '@/src/lib/webrtc';
+import { subscribeToPresence, subscribeToSignals, sendSignal, SignalData } from '@/src/lib/webrtc';
+import { soundManager } from '@/src/lib/sound';
+import { logUserConnection } from '@/src/lib/logger';
+import { ActiveCallRoom } from '@/src/components/call/ActiveCallRoom';
+import { IncomingCallModal } from '@/src/components/call/IncomingCallModal';
 
 interface LiveUsersManagerProps {
   adminEmail?: string;
@@ -14,6 +18,16 @@ export function LiveUsersManager({ adminEmail, onSelectUserForCall }: LiveUsersM
   const [myEmail, setMyEmail] = useState(adminEmail || '');
   const [copiedEmail, setCopiedEmail] = useState<string | null>(null);
   const [searchFilter, setSearchFilter] = useState('');
+
+  // Gestion des appels directs pour l'administrateur
+  const [activeCallPeer, setActiveCallPeer] = useState<string | null>(null);
+  const [callType, setCallType] = useState<'video' | 'audio'>('video');
+  const [isInitiator, setIsInitiator] = useState(true);
+  const [incomingCall, setIncomingCall] = useState<{
+    callerEmail: string;
+    callType: 'video' | 'audio';
+    ambience: string;
+  } | null>(null);
 
   const supabase = createClient();
 
@@ -47,17 +61,54 @@ export function LiveUsersManager({ adminEmail, onSelectUserForCall }: LiveUsersM
     fetchUser();
   }, [adminEmail, supabase]);
 
+  // Suivi de présence et écoute des signaux d'appel
   useEffect(() => {
     if (!myEmail) return;
 
-    const unsubscribe = subscribeToPresence(myEmail, (usersSet) => {
+    // Déverrouillage audio interactif
+    const handleUnlock = () => soundManager.unlock();
+    window.addEventListener('click', handleUnlock, { once: true });
+    window.addEventListener('touchstart', handleUnlock, { once: true });
+
+    // Suivi de présence
+    const unsubscribePresence = subscribeToPresence(myEmail, (usersSet) => {
       setOnlineUsers(new Set(usersSet));
+      // Auto-journalisation des utilisateurs connectés
+      usersSet.forEach((u) => {
+        if (u) logUserConnection(u).catch(() => {});
+      });
+    });
+
+    // Écoute des signaux WebRTC
+    const unsubscribeSignals = subscribeToSignals(myEmail, (signal: SignalData) => {
+      if (signal.type === 'call-request') {
+        setIncomingCall({
+          callerEmail: signal.sender,
+          callType: signal.callType || 'video',
+          ambience: signal.ambience || 'neutral',
+        });
+      } else if (signal.type === 'call-accepted') {
+        soundManager.stop();
+        // L'interlocuteur a accepté
+      } else if (signal.type === 'call-rejected') {
+        soundManager.stop();
+        alert(`${activeCallPeer || 'L’utilisateur'} a décliné l'appel.`);
+        setActiveCallPeer(null);
+      } else if (signal.type === 'call-ended') {
+        soundManager.stop();
+        setActiveCallPeer(null);
+        setIncomingCall(null);
+      }
     });
 
     return () => {
-      unsubscribe();
+      window.removeEventListener('click', handleUnlock);
+      window.removeEventListener('touchstart', handleUnlock);
+      unsubscribePresence();
+      unsubscribeSignals();
+      soundManager.stop();
     };
-  }, [myEmail]);
+  }, [myEmail, activeCallPeer]);
 
   const handleCopy = (email: string) => {
     if (typeof navigator !== 'undefined' && navigator.clipboard) {
@@ -67,19 +118,71 @@ export function LiveUsersManager({ adminEmail, onSelectUserForCall }: LiveUsersM
     }
   };
 
-  const handleCall = (email: string) => {
-    if (onSelectUserForCall) {
-      onSelectUserForCall(email);
+  // Lancer un appel direct vers un utilisateur en ligne
+  const handleStartCall = async (peerEmail: string, type: 'video' | 'audio' = 'video') => {
+    if (!peerEmail || !myEmail) return;
+
+    const cleanPeer = peerEmail.toLowerCase().trim();
+    setCallType(type);
+    setIsInitiator(true);
+    setActiveCallPeer(cleanPeer);
+
+    // Déclenche la tonalité d'attente sortante pour l'administrateur
+    soundManager.startOutgoingRingtone();
+
+    // Envoi du signal d'appel
+    await sendSignal(cleanPeer, {
+      type: 'call-request',
+      sender: myEmail,
+      target: cleanPeer,
+      callType: type,
+      ambience: 'neutral',
+    });
+  };
+
+  // Accepter un appel entrant
+  const handleAcceptIncomingCall = async () => {
+    if (!incomingCall || !myEmail) return;
+
+    soundManager.stop();
+    const caller = incomingCall.callerEmail;
+    setCallType(incomingCall.callType);
+    setIsInitiator(false);
+    setActiveCallPeer(caller);
+    setIncomingCall(null);
+
+    await sendSignal(caller, {
+      type: 'call-accepted',
+      sender: myEmail,
+      target: caller,
+    });
+  };
+
+  // Refuser un appel entrant
+  const handleRejectIncomingCall = async () => {
+    if (!incomingCall || !myEmail) return;
+
+    soundManager.stop();
+    const caller = incomingCall.callerEmail;
+    setIncomingCall(null);
+
+    await sendSignal(caller, {
+      type: 'call-rejected',
+      sender: myEmail,
+      target: caller,
+    });
+  };
+
+  const handleEndCall = () => {
+    soundManager.stop();
+    if (activeCallPeer && myEmail) {
+      sendSignal(activeCallPeer, {
+        type: 'call-ended',
+        sender: myEmail,
+        target: activeCallPeer,
+      }).catch(() => {});
     }
-    // Déclenche également un événement global pour pré-remplir le CallLauncher
-    if (typeof window !== 'undefined') {
-      window.dispatchEvent(new CustomEvent('yam:select-call-peer', { detail: { email } }));
-      const launcherElement = document.getElementById('peer-email');
-      if (launcherElement) {
-        launcherElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        launcherElement.focus();
-      }
-    }
+    setActiveCallPeer(null);
   };
 
   const allUsersList = Array.from(onlineUsers);
@@ -93,7 +196,34 @@ export function LiveUsersManager({ adminEmail, onSelectUserForCall }: LiveUsersM
   ).length;
 
   return (
-    <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 sm:p-6 shadow-xl space-y-5">
+    <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 sm:p-6 shadow-xl space-y-5 relative">
+      {/* Modal d'appel entrant */}
+      {incomingCall && (
+        <IncomingCallModal
+          callerEmail={incomingCall.callerEmail}
+          callType={incomingCall.callType}
+          ambience={incomingCall.ambience}
+          onAccept={handleAcceptIncomingCall}
+          onReject={handleRejectIncomingCall}
+        />
+      )}
+
+      {/* Salle d'appel actif en surimpression fluide */}
+      {activeCallPeer && (
+        <div className="fixed inset-0 z-50 bg-slate-950/95 backdrop-blur-md p-2 sm:p-4 md:p-6 flex flex-col items-center justify-center animate-in fade-in duration-200 overflow-y-auto">
+          <div className="w-full max-w-5xl my-auto bg-slate-900 border border-slate-800 rounded-3xl overflow-hidden shadow-2xl flex flex-col max-h-[96vh] overflow-y-auto">
+            <ActiveCallRoom
+              callerEmail={myEmail}
+              receiverEmail={activeCallPeer}
+              isInitiator={isInitiator}
+              callType={callType}
+              ambience="neutral"
+              onEndCall={handleEndCall}
+            />
+          </div>
+        </div>
+      )}
+
       {/* En-tête avec compteur temps réel */}
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 pb-4">
         <div>
@@ -107,7 +237,7 @@ export function LiveUsersManager({ adminEmail, onSelectUserForCall }: LiveUsersM
             </span>
           </div>
           <p className="text-xs text-slate-400 mt-1">
-            Détection instantanée via Supabase Realtime WebSocket • Mise à jour automatique sans rechargement
+            Détection instantanée via Supabase Realtime • Cliquez sur <strong>Appeler</strong> pour lancer la communication immédiate
           </p>
         </div>
 
@@ -172,13 +302,24 @@ export function LiveUsersManager({ adminEmail, onSelectUserForCall }: LiveUsersM
                 {/* Actions rapides */}
                 <div className="flex items-center gap-2 pt-2 border-t border-slate-800/80">
                   {!isMe && (
-                    <button
-                      type="button"
-                      onClick={() => handleCall(email)}
-                      className="flex-1 py-1.5 px-3 rounded-lg text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-500 transition-all flex items-center justify-center gap-1.5 shadow cursor-pointer"
-                    >
-                      <span>📞</span> Appeler
-                    </button>
+                    <div className="flex-1 flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => handleStartCall(email, 'video')}
+                        className="flex-1 py-1.5 px-2.5 rounded-lg text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-500 transition-all flex items-center justify-center gap-1 shadow cursor-pointer"
+                        title="Démarrer un appel vidéo"
+                      >
+                        <span>📹</span> Appeler
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleStartCall(email, 'audio')}
+                        className="py-1.5 px-2.5 rounded-lg text-xs font-bold text-slate-200 bg-slate-800 hover:bg-slate-700 transition-all flex items-center justify-center gap-1 shadow cursor-pointer"
+                        title="Démarrer un appel audio seul"
+                      >
+                        <span>🎙️</span>
+                      </button>
+                    </div>
                   )}
 
                   <button

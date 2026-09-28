@@ -362,6 +362,14 @@ export function ActiveCallRoom({
           <span className="px-3 py-1 rounded-full text-xs font-semibold bg-emerald-950 text-emerald-400 border border-emerald-800 animate-pulse">
             🔴 Session Active
           </span>
+          <button
+            type="button"
+            onClick={handleHangup}
+            className="px-3.5 py-1.5 rounded-xl bg-red-600 hover:bg-red-500 text-white font-bold text-xs shadow-lg transition-all flex items-center gap-1.5 cursor-pointer ml-1"
+          >
+            <span>🔴</span>
+            <span>Raccrocher</span>
+          </button>
         </div>
       </div>
 
@@ -418,7 +426,7 @@ export function ActiveCallRoom({
       {activeTab === 'video' && (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {/* Flux de l'interlocuteur distant */}
-          <div className="relative bg-slate-900 rounded-2xl overflow-hidden border border-slate-800 aspect-video flex items-center justify-center shadow-lg">
+          <div className="relative bg-slate-900 rounded-2xl overflow-hidden border border-slate-800 h-52 sm:h-64 md:h-72 max-h-[46vh] flex items-center justify-center shadow-lg">
             <video
               ref={remoteVideoRef}
               autoPlay
@@ -440,7 +448,7 @@ export function ActiveCallRoom({
           </div>
 
           {/* Mon flux vidéo local */}
-          <div className="relative bg-slate-900 rounded-2xl overflow-hidden border border-slate-800 aspect-video flex items-center justify-center shadow-lg">
+          <div className="relative bg-slate-900 rounded-2xl overflow-hidden border border-slate-800 h-52 sm:h-64 md:h-72 max-h-[46vh] flex items-center justify-center shadow-lg">
             {callType === 'video' && !camOff ? (
               <video
                 ref={localVideoRef}
@@ -468,7 +476,7 @@ export function ActiveCallRoom({
 
       {/* Vue 2 : Tarifs affichés dans la salle d'appel */}
       {activeTab === 'tarifs' && (
-        <div className="p-4 bg-slate-900/60 rounded-2xl border border-slate-800">
+        <div className="p-4 bg-slate-900/60 rounded-2xl border border-slate-800 max-h-[50vh] overflow-y-auto">
           <PricingPlans />
         </div>
       )}
@@ -479,11 +487,12 @@ export function ActiveCallRoom({
       {/* Vue 4 : Partage de fichiers & images */}
       {activeTab === 'files' && <FileShare />}
 
-      {/* Barre de contrôle ergonomique */}
-      <div className="flex flex-wrap items-center justify-center gap-3 pt-4 border-t border-slate-800">
+      {/* Barre de contrôle ergonomique sticky */}
+      <div className="sticky bottom-0 bg-slate-950/95 backdrop-blur-md py-3 px-4 rounded-2xl border border-slate-800 shadow-2xl flex flex-wrap items-center justify-center gap-3 z-30">
         <button
+          type="button"
           onClick={toggleMic}
-          className={`px-5 py-3 rounded-full text-xs sm:text-sm font-bold transition-all border shadow-md flex items-center gap-2 ${
+          className={`px-4 py-2.5 rounded-full text-xs sm:text-sm font-bold transition-all border shadow-md flex items-center gap-2 cursor-pointer ${
             micMuted
               ? 'bg-red-950 border-red-700 text-red-300'
               : 'bg-slate-900 border-slate-700 text-slate-200 hover:bg-slate-800'
@@ -494,8 +503,9 @@ export function ActiveCallRoom({
 
         {callType === 'video' && (
           <button
+            type="button"
             onClick={toggleCam}
-            className={`px-5 py-3 rounded-full text-xs sm:text-sm font-bold transition-all border shadow-md flex items-center gap-2 ${
+            className={`px-4 py-2.5 rounded-full text-xs sm:text-sm font-bold transition-all border shadow-md flex items-center gap-2 cursor-pointer ${
               camOff
                 ? 'bg-red-950 border-red-700 text-red-300'
                 : 'bg-slate-900 border-slate-700 text-slate-200 hover:bg-slate-800'
@@ -506,10 +516,12 @@ export function ActiveCallRoom({
         )}
 
         <button
+          type="button"
           onClick={handleHangup}
-          className="px-6 py-3 rounded-full bg-red-600 hover:bg-red-500 text-white font-bold text-xs sm:text-sm shadow-xl transition-all flex items-center gap-2 cursor-pointer"
+          className="px-6 py-2.5 rounded-full bg-red-600 hover:bg-red-500 text-white font-bold text-xs sm:text-sm shadow-xl transition-all flex items-center gap-2 cursor-pointer"
         >
-          🔴 Raccrocher & Fermer la session
+          <span>🔴</span>
+          <span>Raccrocher</span>
         </button>
       </div>
     </div>

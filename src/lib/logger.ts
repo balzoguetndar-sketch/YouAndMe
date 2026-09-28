@@ -18,11 +18,16 @@ export async function logUserConnection(email: string) {
   // 2. Fallback direct via client Supabase
   try {
     const supabase = createClient();
+    const nowISO = new Date().toISOString();
     await supabase.from('connection_logs').insert([
       {
         email: cleanEmail,
         ip_address: 'Direct',
-        created_at: new Date().toISOString(),
+        user_agent: typeof navigator !== 'undefined' ? navigator.userAgent : 'Client App',
+        started_at: nowISO,
+        ended_at: nowISO,
+        created_at: nowISO,
+        location: 'Direct',
       },
     ]);
   } catch (err) {
