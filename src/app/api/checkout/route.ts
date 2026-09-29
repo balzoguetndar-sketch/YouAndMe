@@ -5,7 +5,42 @@ const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
     apiVersion: '2023-10-16' as any,
 });
 
-export async function POST(request: Request) {
+export async function POST(req: Request) {
+    try {
+        const { priceId } = await req.json();
+
+        if (!priceId) {
+            return NextResponse.json(
+                { error: 'Identifiant du tarif manquant.' },
+                { status: 400 }
+            );
+        }
+
+        const origin = req.headers.get('origin') || 'http://localhost:3000';
+
+        // Création de la session Stripe Checkout
+        const session = await stripe.checkout.sessions.create({
+            payment_method_types: ['card'],
+            line_items: [
+                {
+                    price: priceId,
+                    quantity: 1,
+                },
+            ],
+            mode: 'payment',
+            // En cas de succès :
+            success_url: `${origin}/confirmation-paiement?session_id={CHECKOUT_SESSION_ID}`,
+            // En cas d'annulation/renoncement par l'utilisateur :
+            cancel_url: `${origin}/faire-un-paiement?status=cancelled`,
+        });
+
+        return NextResponse.json({ url: session.url });
+    } catch (error: any) {
+        console.error('Erreur Stripe Checkout:', error);
+        return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+}
+/* export async function POST(request: Request) {
     try {
         const { amount, email } = await request.json();
 
@@ -41,7 +76,7 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: err.message }, { status: 500 });
     }
 
-}
+} */
 
 /* const session = await stripe.checkout.sessions.create({
   payment_method_types: ['card'],

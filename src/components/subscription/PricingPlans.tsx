@@ -1,7 +1,10 @@
 'use client';
 
+import { useState } from 'react';
+
 type Plan = {
   id: string;
+  priceId?: string;
   name: string;
   price: string;
   period: string;
@@ -13,9 +16,10 @@ type Plan = {
 const PLANS: Plan[] = [
   {
     id: 'ad_supported',
-    name: 'Formule Standard',
+    priceId: process.env.NEXT_PUBLIC_STRIPE_PRICE_YOU_5_AN,
+    name: 'Formule Standard (YOU - 5)',
     price: '7 €',
-    period: '/ mois',
+    period: '/ an',
     features: [
       'Appels Vidéo & Audio illimités',
       'Tableau blanc partagé',
@@ -25,9 +29,10 @@ const PLANS: Plan[] = [
   },
   {
     id: 'no_ads',
-    name: 'Formule Sans Publicité',
+    priceId: process.env.NEXT_PUBLIC_STRIPE_PRICE_YOU_12_AN,
+    name: 'Formule 1 an (YOU-12-AN)',
     price: '12 €',
-    period: '/ mois',
+    period: '/ an',
     badge: 'Populaire',
     recommended: true,
     features: [
@@ -39,9 +44,10 @@ const PLANS: Plan[] = [
   },
   {
     id: 'supporter',
-    name: 'Formule Soutien',
+    priceId: process.env.NEXT_PUBLIC_STRIPE_PRICE_YOU_S,
+    name: 'Formule Soutien A VIE(YOU-S)',
     price: '50 €',
-    period: '/ mois',
+    period: '/ A VIE',
     badge: 'VIP / Mécène',
     features: [
       'Accès VIP intégral sans publicité',
@@ -53,9 +59,37 @@ const PLANS: Plan[] = [
 ];
 
 export function PricingPlans() {
-  const handleSubscribe = (planId: string) => {
-    // Redirection vers le lien de paiement Stripe / Mobile Money
-    alert(`Initiation du paiement par Carte / Mobile Money pour la formule : ${planId}`);
+  const [loadingPlanId, setLoadingPlanId] = useState<string | null>(null);
+
+  const handleSubscribe = async (plan: Plan) => {
+    if (!plan.priceId) {
+      alert(`Clé de prix Stripe non configurée dans .env.local pour : ${plan.name}`);
+      return;
+    }
+
+    setLoadingPlanId(plan.id);
+
+    try {
+      const response = await fetch('/api/checkout', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ priceId: plan.priceId }),
+      });
+
+      const data = await response.json();
+
+      if (data.url) {
+        // Redirection directe vers la page sécurisée Stripe Checkout
+        window.location.href = data.url;
+      } else {
+        alert(data.error || 'Erreur lors de la redirection vers Stripe.');
+      }
+    } catch (err) {
+      console.error(err);
+      alert('Impossible de contacter le serveur.');
+    } finally {
+      setLoadingPlanId(null);
+    }
   };
 
   return (
@@ -63,7 +97,7 @@ export function PricingPlans() {
       <div className="text-center space-y-2">
         <h2 className="text-3xl font-extrabold text-indigo-400">Choisissez votre formule</h2>
         <p className="text-sm text-slate-400">
-          Paiement sécurisé disponible par **Carte Bancaire (Stripe)** et **Mobile Money** partout dans le monde.
+          Paiement sécurisé disponible par **Carte Bancaire (Stripe)** et **Mobile Money**.
         </p>
       </div>
 
@@ -71,11 +105,10 @@ export function PricingPlans() {
         {PLANS.map((plan) => (
           <div
             key={plan.id}
-            className={`rounded-2xl p-6 flex flex-col justify-between border transition-all ${
-              plan.recommended
-                ? 'bg-slate-900 border-indigo-500 shadow-2xl scale-105'
-                : 'bg-slate-950 border-slate-800 shadow-xl'
-            }`}
+            className={`rounded-2xl p-6 flex flex-col justify-between border transition-all ${plan.recommended
+              ? 'bg-slate-900 border-indigo-500 shadow-2xl scale-105'
+              : 'bg-slate-950 border-slate-800 shadow-xl'
+              }`}
           >
             <div className="space-y-4">
               {plan.badge && (
@@ -98,14 +131,14 @@ export function PricingPlans() {
             </div>
 
             <button
-              onClick={() => handleSubscribe(plan.id)}
-              className={`mt-6 w-full py-3 rounded-xl font-bold text-xs shadow-lg transition-all ${
-                plan.recommended
-                  ? 'bg-indigo-600 hover:bg-indigo-500 text-white'
-                  : 'bg-slate-800 hover:bg-slate-700 text-slate-100 border border-slate-700'
-              }`}
+              onClick={() => handleSubscribe(plan)}
+              disabled={loadingPlanId === plan.id}
+              className={`mt-6 w-full py-3 rounded-xl font-bold text-xs shadow-lg transition-all disabled:opacity-50 ${plan.recommended
+                ? 'bg-indigo-600 hover:bg-indigo-500 text-white'
+                : 'bg-slate-800 hover:bg-slate-700 text-slate-100 border border-slate-700'
+                }`}
             >
-              Souscrire (Carte / Mobile Money)
+              {loadingPlanId === plan.id ? 'Redirection vers Stripe...' : 'Souscrire (Carte / Mobile Money)'}
             </button>
           </div>
         ))}
