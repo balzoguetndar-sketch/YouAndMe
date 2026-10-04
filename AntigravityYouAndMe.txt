@@ -1,0 +1,137 @@
+================================================================================
+          YOU&ME (YaM) — SYNTHÈSE COMPLÈTE DU PROJET & DES CONVERSATIONS
+                         Généré par Antigravity
+================================================================================
+
+Date de génération : 4 Octobre 2026
+Projet : YouAndMe (YaM) — Plateforme de Communication Vidéo & Audio Privée
+Compte GitHub : balzoguetndar-sketch (balzoguetndar@gmail.com)
+Dépôt distant : https://github.com/balzoguetndar-sketch/YouAndMe.git
+Site de production : https://www.youandme.cloud
+
+--------------------------------------------------------------------------------
+1. OBJECTIF GÉNÉRAL DU PROJET
+--------------------------------------------------------------------------------
+Création et déploiement d'une version mobile (Android et iOS) du site You&Me :
+- Utiliser exactement les mêmes fichiers et le même design que le site web.
+- Déploiement à moindre frais (0 € de redevance annuelle de store) via PWA.
+- Compatibilité avec Android Studio (Capacitor) pour la génération d'un APK natif.
+- Protection totale du code source, des clés API et de la propriété intellectuelle.
+- Sauvegarde préalable et synchronisation finale sécurisée avec GitHub.
+
+
+--------------------------------------------------------------------------------
+2. DIAGNOSTIC INITIAL & CORRECTIONS WEBRTC
+--------------------------------------------------------------------------------
+A. Problèmes rencontrés lors des sessions de test antérieures :
+   - Les appels ne passaient pas toujours ou l'audio était inaudible.
+   - On voyait une vidéo mais pas l'autre (asymétrie).
+   - La sonnerie tournait sans que le correspondant ne décroche.
+
+B. Causes techniques identifiées et réparations apportées :
+   1. Négociation SDP WebRTC (Offer / Answer) :
+      - Verrouillage via une promesse (mediaReadyPromise) : la réponse SDP n'est
+        générée que lorsque les périphériques locaux (caméra + micro) sont
+        capturés et attachés au PeerConnection.
+   2. File d'attente des candidats ICE (Réseaux 4G / 5G / Wi-Fi) :
+      - Mise en place de pendingIceCandidates pour éviter l'erreur InvalidStateError
+        lorsque les paquets réseau arrivent avant la description distante.
+   3. Politique Autoplay des navigateurs mobiles :
+      - Gestionnaire Web Audio API (sound.ts) pour les sonneries entrantes/sortantes.
+      - Ajout d'un bouton de secours interactif ("Activer le son") pour forcer le
+        déblocage audio sur Safari iOS et Chrome Android.
+   4. Autorisations matérielles :
+      - Déclaration explicite des permissions CAMERA, RECORD_AUDIO et INTERNET
+        dans le fichier AndroidManifest.xml et les métadonnées PWA.
+
+
+--------------------------------------------------------------------------------
+3. DÉROULEMENT DES ÉTAPES DE MISE EN PLACE
+--------------------------------------------------------------------------------
+
+🔹 ÉTAPE 1 : SAUVEGARDE PRÉALABLE DU DÉPÔT
+   - Création de la branche locale de sauvegarde : 'backup-pre-mobile-pwa'.
+   - Garantie de réversibilité : l'état initial du code reste intact et récupérable.
+
+🔹 ÉTAPE 2 : CONFIGURATION DE LA PWA UNIVERSELLE (iOS & Android)
+   - Création du manifest dynamique (src/app/manifest.ts) :
+     * Nom : 'You&Me — Espace privé'
+     * Affichage : 'standalone' (plein écran sans barre d'adresse navigateur)
+     * Orientation : 'portrait-primary'
+     * Icônes : 192x192px et 512x512px (standards et maskable) + apple-touch-icon.
+   - Intégration du composant InstallPrompt (src/components/pwa/InstallPrompt.tsx) :
+     * Bouton discret 'Installer' dans la barre de navigation.
+     * Déclencheur natif Chrome sur Android.
+     * Modal explicatif pour Safari sur iPhone ("Partager" > "Sur l'écran d'accueil").
+   - Prise en charge des Safe Area Insets (globals.css) :
+     * Adaptation aux encoches iPhone (Notch / Dynamic Island) et barres Android.
+
+🔹 ÉTAPE 3 : SYNCHRONISATION CAPACITOR & PROTECTION TOTALE DU CODE
+   - Synchronisation du dossier Android natif :
+     * Commande : npx cap sync android
+     * Cible distante : https://www.youandme.cloud
+     * Package ID : cloud.youandme.app
+   - Protection des clés secrètes (.gitignore) :
+     * Verrouillage strict de tous les fichiers .env*, des clés Stripe et Supabase.
+     * Exclusion des certificats et clés Android (*.jks, *.keystore, *.pem, *.key).
+   - Protection du code source web (next.config.ts) :
+     * productionBrowserSourceMaps: false (code JavaScript minifié, non inspectable).
+     * poweredByHeader: false (masquage de l'empreinte technique serveur).
+     * En-têtes HTTP de sécurité stricts (X-Frame-Options, Permissions-Policy).
+   - Obfuscation et compression du code Android (build.gradle & proguard-rules.pro) :
+     * ProGuard / R8 activé en mode release (minifyEnabled true, shrinkResources true).
+
+🔹 ÉTAPE 4 : BATTERIE DE TESTS AUTOMATISÉS & VÉRIFICATIONS
+   - Compilation Next.js (npm run build) : Validée avec 0 erreur.
+   - Endpoint /manifest.webmanifest : HTTP 200 OK (Content-Type: application/manifest+json).
+   - Page /login : HTTP 200 OK (HTML valide avec balises Apple Web App).
+   - Icônes /icon-192x192.png, /icon-512x512.png, /apple-touch-icon.png : HTTP 200 OK.
+   - Détection de l'exécutable Android Studio (studio64.exe) : Opérationnel.
+
+🔹 ÉTAPE 5 : GESTION DES ACCÈS GITHUB & PUSH FINAL
+   - Bascule du compte actif GitHub CLI vers : balzoguetndar-sketch.
+   - Commit : feat(mobile-pwa-android): integration PWA universelle (iOS/Android),
+              projet Android Studio Capacitor et protection du code (ID: 9ea593c).
+   - Push réussi vers https://github.com/balzoguetndar-sketch/YouAndMe.git sur la branche 'main'.
+   - État Git final : 'working tree clean' (parfaitement synchronisé).
+
+
+--------------------------------------------------------------------------------
+4. GUIDE D'UTILISATION POUR VOS UTILISATEURS
+--------------------------------------------------------------------------------
+
+A. Installation sur iPhone / iPad (iOS Safari) :
+   1. Ouvrir le site https://www.youandme.cloud dans Safari.
+   2. Toucher l'icône Partager (carré avec une flèche vers le haut).
+   3. Choisir « Sur l'écran d'accueil » puis « Ajouter ».
+   4. L'application You&Me s'ouvre comme une application native sans barre URL.
+
+B. Installation sur Smartphone Android (Chrome / Samsung Internet) :
+   1. Ouvrir le site https://www.youandme.cloud.
+   2. Cliquer sur le bouton « Installer » affiché dans l'en-tête du site.
+   3. L'application est ajoutée à la liste des applications du téléphone.
+
+C. Compilation de l'APK via Android Studio :
+   1. Lancer Android Studio sur votre ordinateur.
+   2. Ouvrir le dossier : C:\Users\adiop\YouAndMe\android
+   3. Menu « Build » > « Build Bundle(s) / APK(s) » > « Build APK(s) ».
+
+
+--------------------------------------------------------------------------------
+5. RÉSUMÉ DES FICHIERS CLÉS
+--------------------------------------------------------------------------------
+- Configuration PWA : src/app/manifest.ts
+- Métadonnées globales & Viewport : src/app/layout.tsx
+- Styles & Safe Area : src/app/globals.css
+- Composant Bouton d'Installation : src/components/pwa/InstallPrompt.tsx
+- Moteur WebRTC & Présence : src/lib/webrtc.ts
+- Salle d'Appel Vidéo & Audio : src/components/call/ActiveCallRoom.tsx
+- Générateur Sonore (Sonneries) : src/lib/sound.ts
+- Configuration Capacitor : capacitor.config.ts
+- Projet Android Natif : android/
+- Protection & Sécurité Web : next.config.ts & .gitignore
+- Branche de sauvegarde : backup-pre-mobile-pwa
+
+================================================================================
+                 FIN DU DOCUMENT — ANTIGRAVITY YOUANDME
+================================================================================
