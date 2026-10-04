@@ -13,6 +13,23 @@ export function Whiteboard({ roomId }: WhiteboardProps) {
   const [color, setColor] = useState('#6366f1');
   const supabase = createClient();
 
+  const drawSegment = (
+    ctx: CanvasRenderingContext2D,
+    x0: number,
+    y0: number,
+    x1: number,
+    y1: number,
+    segmentColor: string
+  ) => {
+    ctx.beginPath();
+    ctx.moveTo(x0, y0);
+    ctx.lineTo(x1, y1);
+    ctx.strokeStyle = segmentColor;
+    ctx.lineWidth = 3;
+    ctx.lineCap = 'round';
+    ctx.stroke();
+  };
+
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -35,24 +52,7 @@ export function Whiteboard({ roomId }: WhiteboardProps) {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [roomId, supabase]);
-
-  const drawSegment = (
-    ctx: CanvasRenderingContext2D,
-    x0: number,
-    y0: number,
-    x1: number,
-    y1: number,
-    segmentColor: string
-  ) => {
-    ctx.beginPath();
-    ctx.moveTo(x0, y0);
-    ctx.lineTo(x1, y1);
-    ctx.strokeStyle = segmentColor;
-    ctx.lineWidth = 3;
-    ctx.lineCap = 'round';
-    ctx.stroke();
-  };
+  }, [roomId, supabase, drawSegment]);
 
   const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
     setIsDrawing(true);
@@ -80,7 +80,7 @@ export function Whiteboard({ roomId }: WhiteboardProps) {
 
     // Envoi du tracé à l'interlocuteur via Supabase Broadcast
     const channel = supabase.channel(`whiteboard:${roomId}`);
-    channel.send({
+    void channel.send({
       type: 'broadcast',
       event: 'draw',
       payload: { x0, y0, x1, y1, drawColor: color },

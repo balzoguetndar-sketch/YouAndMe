@@ -3,14 +3,22 @@
  * Fonctionne sur tous les navigateurs (Chrome, Safari, Firefox, Edge, Mobile) sans fichier externe.
  */
 
+type AudioWindow = Window & typeof globalThis & {
+  webkitAudioContext?: typeof AudioContext;
+};
+
 class SoundManager {
   private ctx: AudioContext | null = null;
-  private intervalId: any = null;
+  private intervalId: ReturnType<typeof setInterval> | null = null;
   private isPlaying = false;
 
   private getAudioContext(): AudioContext {
     if (!this.ctx || this.ctx.state === 'closed') {
-      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+      const browserWindow = window as AudioWindow;
+      const AudioCtx = browserWindow.AudioContext ?? browserWindow.webkitAudioContext;
+      if (!AudioCtx) {
+        throw new Error('Web Audio API non supporté dans ce navigateur.');
+      }
       this.ctx = new AudioCtx();
     }
     if (this.ctx && this.ctx.state === 'suspended') {

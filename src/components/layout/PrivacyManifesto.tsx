@@ -28,7 +28,7 @@ export function PrivacyManifesto() {
           <div className="text-lg">🔒</div>
           <h4 className="font-bold text-slate-200">Zéro Flicage & Auto-Purge</h4>
           <p className="text-slate-400 leading-relaxed">
-            Aucun historique de vos échanges n'est stocké sur serveur. À la fin de l'appel, la session s'efface définitivement.
+            Aucun historique de vos échanges n&apos;est stocké sur serveur. À la fin de l&apos;appel, la session s&apos;efface définitivement.
           </p>
         </div>
 

@@ -14,7 +14,7 @@ export type SignalData = {
   type: SignalType;
   sender: string;
   target: string;
-  payload?: any;
+  payload?: unknown;
   ambience?: string;
   callType?: 'audio' | 'video';
 };
@@ -93,7 +93,7 @@ export async function sendSignal(targetEmail: string, signal: SignalData): Promi
       }
     };
 
-    if (channel && (channel as any).state === 'joined') {
+    if (channel && channel.state === 'joined') {
       transmit(channel);
       return;
     }
@@ -138,7 +138,7 @@ export function subscribeToPresence(
 
   presenceListeners.add(onPresenceUpdate);
 
-  const notifyAll = (state: Record<string, any[]>) => {
+  const notifyAll = (state: Record<string, unknown[]>) => {
     const onlineSet = new Set<string>();
     Object.keys(state).forEach((key) => {
       onlineSet.add(key.toLowerCase().trim());

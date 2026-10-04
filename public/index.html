@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>YouAndMe Mobile</title>
+    <style>
+      html, body {
+        margin: 0;
+        height: 100%;
+        background: #0b1020;
+        color: white;
+        font-family: Arial, sans-serif;
+      }
+      body {
+        display: grid;
+        place-items: center;
+      }
+      .loader {
+        text-align: center;
+      }
+      .spinner {
+        width: 36px;
+        height: 36px;
+        border: 4px solid rgba(255,255,255,0.2);
+        border-top-color: #fff;
+        border-radius: 50%;
+        animation: spin 1s linear infinite;
+        margin: 0 auto 12px;
+      }
+      @keyframes spin {
+        to { transform: rotate(360deg); }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="loader">
+      <div class="spinner"></div>
+      <div>Connexion à YouAndMe impossible. Vérifiez votre connexion Internet.</div>
+    </div>
+  </body>
+</html>

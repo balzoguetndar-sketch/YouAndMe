@@ -27,30 +27,33 @@ export function ActiveCallRoom({
 }: ActiveCallRoomProps) {
   const localVideoRef = useRef<HTMLVideoElement>(null);
   const remoteVideoRef = useRef<HTMLVideoElement>(null);
+  const remoteAudioRef = useRef<HTMLAudioElement>(null);
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
+  const remoteStreamRef = useRef<MediaStream | null>(null);
 
   const [stream, setStream] = useState<MediaStream | null>(null);
-  const [remoteStreamReceived, setRemoteStreamReceived] = useState(false);
+  const [remoteAudioReceived, setRemoteAudioReceived] = useState(false);
+  const [remoteVideoReceived, setRemoteVideoReceived] = useState(false);
+  const [audioPlaybackBlocked, setAudioPlaybackBlocked] = useState(false);
+  const [mediaWarning, setMediaWarning] = useState<string | null>(null);
   const [micMuted, setMicMuted] = useState(false);
   const [camOff, setCamOff] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState<'connecting' | 'connected' | 'disconnected'>('connecting');
   const [activeTab, setActiveTab] = useState<'video' | 'tarifs' | 'whiteboard' | 'files'>('video');
-  const [showPricingSetting, setShowPricingSetting] = useState(true);
+  const [showPricingSetting, setShowPricingSetting] = useState<boolean>(() => {
+    if (typeof window === 'undefined') {
+      return true;
+    }
+    const saved = localStorage.getItem('yam_show_pricing_in_room');
+    return saved === null ? true : saved === 'true';
+  });
 
   const supabase = createClient();
   const roomId = [callerEmail, receiverEmail].sort().join('__').replace(/[^a-zA-Z0-9_-]/g, '_');
 
   // 1. Récupération & écoute en direct du réglage administrateur pour l'affichage des tarifs en salle
   useEffect(() => {
-    // Vérification initiale locale
-    if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem('yam_show_pricing_in_room');
-      if (saved !== null) {
-        setShowPricingSetting(saved === 'true');
-      }
-    }
-
     // Écoute en direct des changements diffusés par l'administrateur
     const channel = supabase.channel('yam_admin_settings');
     channel
@@ -69,12 +72,16 @@ export function ActiveCallRoom({
   // 2. Initialisation WebRTC complète avec file d'attente ICE Candidate sécurisée
   useEffect(() => {
     let isMounted = true;
+    let localVideoElement = localVideoRef.current;
+    let remoteVideoElement = remoteVideoRef.current;
+    let remoteAudioElement = remoteAudioRef.current;
     const pendingIceCandidates: RTCIceCandidateInit[] = [];
     const pc = new RTCPeerConnection(ICE_SERVERS);
     pcRef.current = pc;
 
     // Stream distant accumulé
     const remoteStream = new MediaStream();
+    remoteStreamRef.current = remoteStream;
 
     // Fonction pour vider la file d'attente des candidats ICE dès que la remoteDescription est prête
     const processPendingIceCandidates = async () => {
@@ -104,14 +111,31 @@ export function ActiveCallRoom({
         }
       }
 
-      if (remoteVideoRef.current) {
-        remoteVideoRef.current.srcObject = remoteStream;
-        remoteVideoRef.current.play().catch(() => {});
+      const audioElement = remoteAudioRef.current;
+      if (audioElement) {
+        remoteAudioElement = audioElement;
+        audioElement.srcObject = remoteStream;
+        audioElement.play().then(() => {
+          if (isMounted) setAudioPlaybackBlocked(false);
+        }).catch((error: unknown) => {
+          console.warn('Lecture audio distante bloquée par le navigateur :', error);
+          if (isMounted) setAudioPlaybackBlocked(true);
+        });
+      }
+
+      const videoElement = remoteVideoRef.current;
+      if (videoElement) {
+        remoteVideoElement = videoElement;
+        videoElement.srcObject = remoteStream;
+        videoElement.play().catch((error: unknown) => {
+          console.warn('Lecture vidéo distante impossible :', error);
+        });
       }
 
       soundManager.stop();
       if (isMounted) {
-        setRemoteStreamReceived(true);
+        if (event.track.kind === 'audio') setRemoteAudioReceived(true);
+        if (event.track.kind === 'video') setRemoteVideoReceived(true);
         setConnectionStatus('connected');
       }
     };
@@ -174,8 +198,12 @@ export function ActiveCallRoom({
               try {
                 // Tentative 3 : Audio seul
                 mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                if (callType === 'video') {
+                  setMediaWarning('Caméra indisponible : l’appel continue sans votre vidéo.');
+                }
               } catch (e3) {
                 console.error('Périphériques audio/vidéo inaccessibles :', e3);
+                setMediaWarning('Microphone et caméra inaccessibles. Vérifiez les autorisations du navigateur.');
               }
             }
           }
@@ -190,8 +218,14 @@ export function ActiveCallRoom({
           localStreamRef.current = mediaStream;
           setStream(mediaStream);
 
-          if (localVideoRef.current) {
-            localVideoRef.current.srcObject = mediaStream;
+            if (callType === 'video' && mediaStream.getVideoTracks().length === 0) {
+              setMediaWarning('Caméra indisponible : l’appel continue sans votre vidéo.');
+            }
+
+          const videoElement = localVideoRef.current;
+          if (videoElement) {
+            localVideoElement = videoElement;
+            videoElement.srcObject = mediaStream;
           }
 
           // Ajout des pistes au PeerConnection
@@ -239,7 +273,9 @@ export function ActiveCallRoom({
           // Attendre impérativement que les pistes locales soient capturées et ajoutées au PC avant de générer la réponse
           await mediaReadyPromise;
 
-          await currentPc.setRemoteDescription(new RTCSessionDescription(signal.payload));
+          await currentPc.setRemoteDescription(
+            new RTCSessionDescription(signal.payload as RTCSessionDescriptionInit)
+          );
           await processPendingIceCandidates();
 
           const answer = await currentPc.createAnswer();
@@ -251,13 +287,17 @@ export function ActiveCallRoom({
             payload: answer,
           });
         } else if (signal.type === 'answer' && isInitiator) {
-          await currentPc.setRemoteDescription(new RTCSessionDescription(signal.payload));
+          await currentPc.setRemoteDescription(
+            new RTCSessionDescription(signal.payload as RTCSessionDescriptionInit)
+          );
           await processPendingIceCandidates();
         } else if (signal.type === 'ice-candidate' && signal.payload) {
           // PROTECTION : Si la description distante n'est pas encore prête, on met en file d'attente
           if (currentPc.remoteDescription && currentPc.remoteDescription.type) {
             try {
-              await currentPc.addIceCandidate(new RTCIceCandidate(signal.payload));
+              await currentPc.addIceCandidate(
+                new RTCIceCandidate(signal.payload as RTCIceCandidateInit)
+              );
             } catch (iceErr) {
               console.warn('Erreur ajout candidat ICE immédiat :', iceErr);
             }
@@ -278,10 +318,33 @@ export function ActiveCallRoom({
       unsubscribeSignals();
       if (localStreamRef.current) {
         localStreamRef.current.getTracks().forEach((t) => t.stop());
+        localStreamRef.current = null;
       }
+      if (localVideoElement) {
+        localVideoElement.srcObject = null;
+      }
+      if (remoteVideoElement?.srcObject === remoteStream) {
+        remoteVideoElement.srcObject = null;
+      }
+      if (remoteAudioElement?.srcObject === remoteStream) {
+        remoteAudioElement.srcObject = null;
+      }
+      remoteStream.getTracks().forEach((track) => track.stop());
+      remoteStreamRef.current = null;
       pc.close();
     };
   }, [callerEmail, receiverEmail, isInitiator, callType, ambience, onEndCall]);
+
+  useEffect(() => {
+    if (activeTab !== 'video') return;
+    const remoteStream = remoteStreamRef.current;
+    if (!remoteStream || !remoteVideoRef.current) return;
+
+    remoteVideoRef.current.srcObject = remoteStream;
+    remoteVideoRef.current.play().catch((error: unknown) => {
+      console.warn('Lecture vidéo distante impossible :', error);
+    });
+  }, [activeTab, remoteVideoReceived]);
 
   const toggleMic = () => {
     if (localStreamRef.current) {
@@ -308,7 +371,7 @@ export function ActiveCallRoom({
         sender: callerEmail,
         target: receiverEmail,
       });
-    } catch (e) {}
+    } catch {}
 
     if (localStreamRef.current) {
       localStreamRef.current.getTracks().forEach((track) => track.stop());
@@ -318,6 +381,20 @@ export function ActiveCallRoom({
     }
     onEndCall();
   };
+
+  const handleEnableRemoteAudio = () => {
+    const audio = remoteAudioRef.current;
+    if (!audio) return;
+
+    audio.play().then(() => {
+      setAudioPlaybackBlocked(false);
+    }).catch((error: unknown) => {
+      console.warn('Activation audio distante impossible :', error);
+      setAudioPlaybackBlocked(true);
+    });
+  };
+
+  const hasLocalVideo = stream?.getVideoTracks().some((track) => track.readyState === 'live') ?? false;
 
   const getAmbianceBadge = (amb: string) => {
     switch (amb) {
@@ -338,6 +415,27 @@ export function ActiveCallRoom({
 
   return (
     <div className="w-full max-w-5xl mx-auto bg-slate-950 border border-slate-800 rounded-3xl p-4 sm:p-6 shadow-2xl space-y-6 text-slate-100 animate-in fade-in">
+      <audio ref={remoteAudioRef} autoPlay playsInline className="sr-only" />
+
+      {mediaWarning && (
+        <p role="status" className="rounded-xl border border-amber-800 bg-amber-950/60 px-4 py-3 text-sm text-amber-200">
+          {mediaWarning}
+        </p>
+      )}
+
+      {audioPlaybackBlocked && (
+        <div role="alert" className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-800 bg-amber-950/60 px-4 py-3">
+          <p className="text-sm text-amber-200">Le navigateur a bloqué le son du correspondant.</p>
+          <button
+            type="button"
+            onClick={handleEnableRemoteAudio}
+            className="rounded-lg bg-amber-700 px-3 py-2 text-sm font-semibold text-white hover:bg-amber-600"
+          >
+            Activer le son
+          </button>
+        </div>
+      )}
+
       {/* En-tête de la salle d'appel */}
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 pb-4">
         <div>
@@ -427,19 +525,28 @@ export function ActiveCallRoom({
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {/* Flux de l'interlocuteur distant */}
           <div className="relative bg-slate-900 rounded-2xl overflow-hidden border border-slate-800 h-52 sm:h-64 md:h-72 max-h-[46vh] flex items-center justify-center shadow-lg">
-            <video
-              ref={remoteVideoRef}
-              autoPlay
-              playsInline
-              className={`w-full h-full object-cover ${remoteStreamReceived ? 'block' : 'hidden'}`}
-            />
-            {!remoteStreamReceived && (
+            {callType === 'video' && remoteVideoReceived && (
+              <video
+                ref={remoteVideoRef}
+                autoPlay
+                playsInline
+                muted
+                className="w-full h-full object-cover"
+              />
+            )}
+            {(callType !== 'video' || !remoteVideoReceived) && (
               <div className="text-center p-6 space-y-3">
                 <div className="w-16 h-16 mx-auto rounded-full bg-slate-800 flex items-center justify-center text-2xl animate-pulse text-indigo-400">
-                  👤
+                  {callType === 'audio' && remoteAudioReceived ? '🎙️' : '👤'}
                 </div>
                 <p className="text-sm font-semibold text-slate-300">{receiverEmail}</p>
-                <p className="text-xs text-slate-500">En attente de connexion du correspondant...</p>
+                <p className="text-xs text-slate-500">
+                  {callType === 'audio' && remoteAudioReceived
+                    ? 'Audio du correspondant connecté.'
+                    : callType === 'video' && remoteAudioReceived
+                    ? 'Audio connecté, en attente de la vidéo...'
+                    : 'En attente de connexion du correspondant...'}
+                </p>
               </div>
             )}
             <span className="absolute top-3 left-3 text-[11px] font-semibold bg-slate-950/80 backdrop-blur px-2.5 py-1 rounded-full text-indigo-300 border border-slate-700">
@@ -449,7 +556,7 @@ export function ActiveCallRoom({
 
           {/* Mon flux vidéo local */}
           <div className="relative bg-slate-900 rounded-2xl overflow-hidden border border-slate-800 h-52 sm:h-64 md:h-72 max-h-[46vh] flex items-center justify-center shadow-lg">
-            {callType === 'video' && !camOff ? (
+            {callType === 'video' && !camOff && hasLocalVideo ? (
               <video
                 ref={localVideoRef}
                 autoPlay
@@ -463,7 +570,11 @@ export function ActiveCallRoom({
                   🎙️
                 </div>
                 <p className="text-xs text-slate-400">
-                  {callType === 'audio' ? 'Mode Audio Uniquement' : 'Caméra locale désactivée'}
+                  {callType === 'audio'
+                    ? 'Mode Audio Uniquement'
+                    : camOff
+                    ? 'Caméra locale désactivée'
+                    : 'Aucune piste vidéo locale'}
                 </p>
               </div>
             )}

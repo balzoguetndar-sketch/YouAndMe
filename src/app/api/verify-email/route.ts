@@ -109,9 +109,11 @@ export async function POST(request: Request) {
           );
         }
       }
-    } catch (dnsErr: any) {
+    } catch (dnsErr: unknown) {
+      const errorCode = dnsErr instanceof Error ? (dnsErr as Error & { code?: string }).code : undefined;
+      const errorMessage = dnsErr instanceof Error ? dnsErr.message : 'Erreur DNS inconnue';
       // Code d'erreur DNS typique quand le domaine n'existe pas
-      if (dnsErr.code === 'ENOTFOUND' || dnsErr.code === 'ENODATA' || dnsErr.code === 'SERVFAIL') {
+      if (errorCode === 'ENOTFOUND' || errorCode === 'ENODATA' || errorCode === 'SERVFAIL') {
         return NextResponse.json(
           {
             valid: false,
@@ -121,7 +123,7 @@ export async function POST(request: Request) {
         );
       }
       // Si timeout ou réseau restreint, on laisse passer pour éviter tout faux blocage
-      console.warn('Vérification DNS passée outre suite à timeout réseau :', dnsErr.message);
+      console.warn('Vérification DNS passée outre suite à timeout réseau :', errorMessage);
     }
 
     const isAdmin = cleanEmail === ADMIN_EMAIL.toLowerCase();
@@ -131,7 +133,7 @@ export async function POST(request: Request) {
       cleanEmail,
       isAdmin,
     });
-  } catch (err: any) {
+  } catch {
     return NextResponse.json(
       { valid: false, error: 'Erreur lors de la vérification de l’e-mail.' },
       { status: 500 }

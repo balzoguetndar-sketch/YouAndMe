@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { createClient } from '@/src/lib/supabase/clients';
 import { logUserConnection } from '@/src/lib/logger';
 import { BannerCarousel } from '@/src/components/banner/BannerCarousel';
@@ -16,14 +16,6 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
 
   const supabase = createClient();
-
-  useEffect(() => {
-    setEmail('');
-    setAdminCode('');
-    setError(null);
-    setSuggestedEmail(null);
-    setStep('email');
-  }, []);
 
   // Étape 1 : Validation approfondie de l'e-mail (syntaxe immédiate + DNS MX)
   const handleEmailSubmit = async (e: React.FormEvent) => {
@@ -52,24 +44,26 @@ export default function LoginPage() {
         body: JSON.stringify({ email: localValidation.cleanEmail }),
       });
 
-      let data: any = null;
+      let data: Record<string, unknown> | null = null;
       try {
-        data = await res.json();
+        data = await res.json() as Record<string, unknown>;
       } catch {
         // En cas d'erreur inattendue de réponse serveur
         data = { valid: true, cleanEmail: localValidation.cleanEmail };
       }
 
-      if (!res.ok || !data.valid) {
+      if (!res.ok || !data?.valid) {
         setLoading(false);
-        setError(data.error || 'Cette adresse e-mail n’a pas pu être validée.');
-        if (data.suggestedEmail) {
-          setSuggestedEmail(data.suggestedEmail);
+        const dataError = typeof data?.error === 'string' ? data.error : 'Cette adresse e-mail n’a pas pu être validée.';
+        setError(dataError);
+        const suggested = typeof data?.suggestedEmail === 'string' ? data.suggestedEmail : null;
+        if (suggested) {
+          setSuggestedEmail(suggested);
         }
         return;
       }
 
-      const cleanEmail = data.cleanEmail || localValidation.cleanEmail;
+      const cleanEmail = typeof data?.cleanEmail === 'string' ? data.cleanEmail : localValidation.cleanEmail;
 
       // Si c'est l'administrateur, passage immédiat à l'étape 2FA
       if (data.isAdmin || cleanEmail === ADMIN_EMAIL.toLowerCase()) {
@@ -96,9 +90,10 @@ export default function LoginPage() {
       await logUserConnection(cleanEmail);
 
       window.location.href = '/';
-    } catch (err: any) {
+    } catch (err: unknown) {
       setLoading(false);
-      setError(`Vérification impossible : ${err.message || 'Veuillez vérifier votre connexion.'}`);
+      const message = err instanceof Error ? err.message : 'Veuillez vérifier votre connexion.';
+      setError(`Vérification impossible : ${message}`);
     }
   };
 
@@ -145,9 +140,10 @@ export default function LoginPage() {
 
       // Redirection vers le panneau administrateur
       window.location.href = '/admin';
-    } catch (err: any) {
+    } catch (err: unknown) {
       setLoading(false);
-      setError(`Erreur d'authentification : ${err.message}`);
+      const message = err instanceof Error ? err.message : 'Erreur d’authentification';
+      setError(`Erreur d&apos;authentification : ${message}`);
     }
   };
 

@@ -3,7 +3,7 @@ import Stripe from 'stripe';
 import { createClient } from '@/src/lib/supabase/server';
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
-    apiVersion: '2023-10-16' as any,
+    apiVersion: '2023-10-16' as Stripe.LatestApiVersion,
 });
 
 export async function POST(request: Request) {
@@ -18,8 +18,9 @@ export async function POST(request: Request) {
             signature!,
             process.env.STRIPE_WEBHOOK_SECRET!
         );
-    } catch (err: any) {
-        console.error(` Signature Webhook invalide: ${err.message}`);
+    } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : 'Signature Webhook invalide';
+        console.error(` Signature Webhook invalide: ${message}`);
         return NextResponse.json({ error: 'Webhook Error' }, { status: 400 });
     }
 

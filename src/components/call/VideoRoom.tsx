@@ -68,7 +68,7 @@ export function VideoRoom() {
               🎥
             </div>
             <p className="text-slate-400 text-sm">
-              La caméra et le microphone ne sont activés qu'avec votre consentement.
+              La caméra et le microphone ne sont activés qu&apos;avec votre consentement.
             </p>
           </div>
         )}

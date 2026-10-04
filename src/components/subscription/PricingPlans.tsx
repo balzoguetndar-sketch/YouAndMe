@@ -76,11 +76,11 @@ export function PricingPlans() {
         body: JSON.stringify({ priceId: plan.priceId }),
       });
 
-      const data = await response.json();
+      const data: { url?: string; error?: string } = await response.json();
 
       if (data.url) {
         // Redirection directe vers la page sécurisée Stripe Checkout
-        window.location.href = data.url;
+        window.location.assign(data.url);
       } else {
         alert(data.error || 'Erreur lors de la redirection vers Stripe.');
       }

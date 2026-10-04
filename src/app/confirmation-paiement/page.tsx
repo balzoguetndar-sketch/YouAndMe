@@ -24,7 +24,7 @@ function ConfirmationContent() {
                         Merci pour votre souscription à la licence **You&Me**.
                     </p>
                     <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 text-amber-400 font-medium text-xs">
-                        📧 Un e-mail contenant votre clé de licence et le lien de téléchargement vient de vous être envoyé par l'administrateur.
+                        📧 Un e-mail contenant votre clé de licence et le lien de téléchargement vient de vous être envoyé par l&apos;administrateur.
                     </div>
                 </div>
 

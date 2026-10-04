@@ -35,8 +35,9 @@ export async function GET() {
     }
 
     return NextResponse.json({ logs: logs || [] });
-  } catch (err: any) {
-    return NextResponse.json({ error: err.message }, { status: 500 });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Erreur inconnue';
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }
 
@@ -89,7 +90,8 @@ export async function POST(request: Request) {
     }
 
     return NextResponse.json({ error: 'Action non reconnue' }, { status: 400 });
-  } catch (err: any) {
-    return NextResponse.json({ error: err.message }, { status: 500 });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Erreur inconnue';
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }

@@ -54,17 +54,18 @@ export function CallLauncher() {
     }
     loadUser();
 
-    const handleSelectPeer = (event: any) => {
-      if (event?.detail?.email) {
-        setPeerEmail(event.detail.email);
+    const handleSelectPeer = (event: Event) => {
+      const customEvent = event as CustomEvent<{ email?: string }>;
+      if (customEvent?.detail?.email) {
+        setPeerEmail(customEvent.detail.email);
       }
     };
     if (typeof window !== 'undefined') {
-      window.addEventListener('yam:select-call-peer', handleSelectPeer);
+      window.addEventListener('yam:select-call-peer', handleSelectPeer as EventListener);
     }
     return () => {
       if (typeof window !== 'undefined') {
-        window.removeEventListener('yam:select-call-peer', handleSelectPeer);
+        window.removeEventListener('yam:select-call-peer', handleSelectPeer as EventListener);
       }
     };
   }, [supabase]);
@@ -320,11 +321,11 @@ export function CallLauncher() {
                 <div className="flex items-center justify-center gap-3">
                   <span className="w-3 h-3 rounded-full bg-emerald-400 animate-ping" />
                   <p className="text-sm font-bold text-indigo-200">
-                    Sonnerie en cours chez <span className="text-white">{cleanPeer}</span>...
+                    Sonnerie en cours chez <span className="text-white">{cleanPeer}</span>... 
                   </p>
                 </div>
                 <p className="text-xs text-slate-400">
-                  En attente que votre interlocuteur décroche. Sonnerie audio active 🔔
+                  En attente que votre interlocuteur d&apos;écroche. Sonnerie audio active 🔔
                 </p>
                 <button
                   type="button"

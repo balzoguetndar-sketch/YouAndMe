@@ -17,12 +17,30 @@
 /.next/
 /out/
 
-# production
+# production & scratch
 /build
+/scratch
+.system_generated
 
-# misc
+# misc & certificates
 .DS_Store
 *.pem
+*.key
+*.crt
+*.p12
+*.jks
+*.keystore
+
+# Android Studio & Gradle
+.gradle
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/.idea/
+android/captures/
+*.apk
+*.aab
 
 # debug
 npm-debug.log*
@@ -30,8 +48,9 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
-# env files (can opt-in for committing if needed)
+# env files (secrets, clés API, Supabase, Stripe)
 .env*
+!.env.example
 
 # vercel
 .vercel
@@ -39,3 +58,4 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
