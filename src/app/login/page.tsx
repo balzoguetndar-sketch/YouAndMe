@@ -16,8 +16,6 @@ export default function LoginPage() {
   const [suggestedEmail, setSuggestedEmail] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
-  const bypassOtpForTesting = true;
-
   const supabase = createClient();
 
   // Étape 1 : Saisie de l'adresse e-mail
@@ -67,19 +65,7 @@ export default function LoginPage() {
 
       const cleanEmail = typeof data?.cleanEmail === 'string' ? data.cleanEmail : localValidation.cleanEmail;
 
-      if (bypassOtpForTesting) {
-        setLoading(false);
-        document.cookie = `yam_user_email=${encodeURIComponent(cleanEmail)}; path=/; SameSite=Lax`;
-        if (typeof window !== 'undefined') {
-          sessionStorage.setItem('yam_user_email', cleanEmail);
-          sessionStorage.setItem('yam_session_active', 'true');
-        }
-        await logUserConnection(cleanEmail);
-        window.location.href = '/';
-        return;
-      }
-
-      // Si c'est l'administrateur, passage direct à la saisie du code de sécurité
+      // L'administrateur garde un parcours dédié avant l'OTP standard.
       if (data.isAdmin || cleanEmail === ADMIN_EMAIL.toLowerCase()) {
         setLoading(false);
         setStep('security_code');
@@ -127,19 +113,13 @@ export default function LoginPage() {
       const cleanEmail = email.trim().toLowerCase();
       const isAdmin = cleanEmail === ADMIN_EMAIL.toLowerCase();
 
-      if (bypassOtpForTesting) {
-        document.cookie = `yam_user_email=${encodeURIComponent(cleanEmail)}; path=/; SameSite=Lax`;
-        if (typeof window !== 'undefined') {
-          sessionStorage.setItem('yam_user_email', cleanEmail);
-          sessionStorage.setItem('yam_session_active', 'true');
+      if (isAdmin) {
+        if (!verifyAdmin2FACode(cleanCode)) {
+          setLoading(false);
+          setError('Code de sécurité incorrect. Veuillez réessayer.');
+          return;
         }
-        await logUserConnection(cleanEmail);
-        window.location.href = '/';
-        return;
-      }
 
-      // Cas Administrateur
-      if (isAdmin && verifyAdmin2FACode(cleanCode)) {
         document.cookie = `yam_user_email=${encodeURIComponent(cleanEmail)}; path=/; SameSite=Lax`;
         document.cookie = `yam_admin_2fa=verified; path=/; SameSite=Lax`;
 
