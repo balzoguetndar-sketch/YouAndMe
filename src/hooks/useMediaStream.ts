@@ -2,6 +2,21 @@
 
 import { useState, useCallback } from 'react';
 
+export const OPTIMIZED_AUDIO_CONSTRAINTS: MediaTrackConstraints = {
+  echoCancellation: true,
+  noiseSuppression: true,
+  autoGainControl: true,
+  sampleRate: { ideal: 48000 },
+  channelCount: { ideal: 2, min: 1 },
+};
+
+export const OPTIMIZED_VIDEO_CONSTRAINTS: MediaTrackConstraints = {
+  facingMode: 'user',
+  width: { ideal: 1280, min: 640 },
+  height: { ideal: 720, min: 480 },
+  frameRate: { ideal: 30, min: 15 },
+};
+
 export function useMediaStream() {
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -15,22 +30,50 @@ export function useMediaStream() {
       if (typeof navigator === 'undefined' || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
         throw new Error('L’accès aux caméras/micros requiert une connexion sécurisée HTTPS (ou localhost).');
       }
-      const mediaStream = await navigator.mediaDevices.getUserMedia({
-        video,
-        audio,
-      });
-      setStream(mediaStream);
+
+      let mediaStream: MediaStream | null = null;
+
+      // Tentative 1 : Contraintes optimisées HD + Audio DSP anti-écho
+      try {
+        mediaStream = await navigator.mediaDevices.getUserMedia({
+          audio: audio ? OPTIMIZED_AUDIO_CONSTRAINTS : false,
+          video: video ? OPTIMIZED_VIDEO_CONSTRAINTS : false,
+        });
+      } catch (hdErr) {
+        console.warn('Tentative flux HD échouée, basculement en mode standard...', hdErr);
+        // Tentative 2 : Standard avec audio DSP basique
+        try {
+          mediaStream = await navigator.mediaDevices.getUserMedia({
+            audio: audio ? { echoCancellation: true, noiseSuppression: true } : false,
+            video: video,
+          });
+        } catch (stdErr) {
+          console.warn('Tentative standard échouée, tentative audio seul...', stdErr);
+          if (audio) {
+            mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            setError('Caméra indisponible ou occupée. Le micro est actif.');
+          } else {
+            throw stdErr;
+          }
+        }
+      }
+
+      if (mediaStream) {
+        setStream(mediaStream);
+      }
       setLoading(false);
       return mediaStream;
     } catch (err: unknown) {
       setLoading(false);
       if (err instanceof Error) {
-        if (err.name === 'NotAllowedError') {
-          setError('Accès au microphone ou à la caméra refusé par l’utilisateur.');
-        } else if (err.name === 'NotFoundError') {
-          setError('Aucun périphérique vidéo ou audio trouvé sur cet appareil.');
+        if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+          setError('Accès au microphone ou à la caméra refusé. Veuillez autoriser l’accès dans les paramètres du navigateur ou de l’application.');
+        } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
+          setError('Aucun périphérique vidéo ou audio détecté sur cet appareil.');
+        } else if (err.name === 'NotReadableError' || err.name === 'TrackStartError') {
+          setError('La caméra ou le micro est déjà utilisé par une autre application.');
         } else {
-          setError(`Erreur média : ${err.message}`);
+          setError(`Erreur d’accès matériel : ${err.message}`);
         }
       } else {
         setError('Impossible d’accéder aux périphériques médias.');
@@ -71,4 +114,4 @@ export function useMediaStream() {
     toggleAudio,
     toggleVideo,
   };
-}
+}

@@ -14,7 +14,11 @@ const nextConfig: NextConfig = {
           },
           {
             key: 'X-Frame-Options',
-            value: 'SAMEORIGIN',
+            value: 'DENY',
+          },
+          {
+            key: 'Content-Security-Policy',
+            value: "frame-ancestors 'none'",
           },
           {
             key: 'Referrer-Policy',

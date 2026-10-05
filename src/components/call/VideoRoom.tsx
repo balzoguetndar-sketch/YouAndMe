@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useMediaStream } from '@/src/hooks/useMediaStream';
+import { AudioLevelVisualizer } from '@/src/components/call/AudioLevelVisualizer';
 
 export function VideoRoom() {
   const { stream, error, loading, startStream, stopStream, toggleAudio, toggleVideo } = useMediaStream();
@@ -73,11 +74,18 @@ export function VideoRoom() {
           </div>
         )}
 
-        {/* Indicateur d'état en direct */}
+        {/* Indicateurs d'état en direct et niveau audio micro */}
         {inCall && (
-          <div className="absolute top-4 left-4 flex items-center gap-2 bg-slate-900/80 backdrop-blur px-3 py-1.5 rounded-full text-xs font-medium border border-slate-700">
-            <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
-            <span>En direct</span>
+          <div className="absolute top-4 left-4 right-4 flex items-center justify-between pointer-events-none">
+            <div className="flex items-center gap-2 bg-slate-900/80 backdrop-blur px-3 py-1.5 rounded-full text-xs font-medium border border-slate-700">
+              <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
+              <span>En direct</span>
+            </div>
+
+            {/* VU-Mètre Audio en temps réel */}
+            <div className="pointer-events-auto">
+              <AudioLevelVisualizer stream={stream} isMuted={!micActive} label="Micro actif" />
+            </div>
           </div>
         )}
       </div>

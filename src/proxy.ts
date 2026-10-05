@@ -41,7 +41,7 @@ export async function proxy(request: NextRequest) {
   } catch {}
 
   const rawCookieEmail = request.cookies.get('yam_user_email')?.value;
-  const rawEmail = authEmail || (rawCookieEmail ? decodeURIComponent(rawCookieEmail) : '');
+  const rawEmail = rawCookieEmail ? decodeURIComponent(rawCookieEmail) : '';
 
   // Validation stricte de l'adresse e-mail
   const { isValid, cleanEmail } = validateEmail(rawEmail);
@@ -61,7 +61,7 @@ export async function proxy(request: NextRequest) {
     return response;
   }
 
-  // 2. Protection des routes générales : Redirection vers /login si email invalide ou absent
+  // 2. Protection des routes générales : Redirection vers /login si session absente
   if (!isValid && !isLoginPage && !isAuthCallback && !isApiRoute) {
     return NextResponse.redirect(new URL('/login', request.url));
   }
@@ -70,5 +70,5 @@ export async function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ['/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp|webmanifest)$).*)'],
+  matcher: ['/((?!_next/static|_next/image|favicon.ico|manifest\\.webmanifest|.*\\.(?:svg|png|jpg|jpeg|gif|webp|webmanifest|mp3|wav)$).*)'],
 };

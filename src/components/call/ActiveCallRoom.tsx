@@ -7,6 +7,7 @@ import { soundManager } from '@/src/lib/sound';
 import { PricingPlans } from '@/src/components/subscription/PricingPlans';
 import { Whiteboard } from '@/src/components/collaboration/Whiteboard';
 import { FileShare } from '@/src/components/collaboration/FileShare';
+import { AudioLevelVisualizer } from '@/src/components/call/AudioLevelVisualizer';
 
 type ActiveCallRoomProps = {
   callerEmail: string;
@@ -171,39 +172,48 @@ export function ActiveCallRoom({
       let mediaStream: MediaStream | null = null;
       try {
         if (navigator?.mediaDevices?.getUserMedia) {
+          const audioConstraints: MediaTrackConstraints = {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+            sampleRate: { ideal: 48000 },
+            channelCount: { ideal: 2, min: 1 },
+          };
+
+          const videoConstraints: MediaTrackConstraints = {
+            facingMode: 'user',
+            width: { ideal: 1280, min: 640 },
+            height: { ideal: 720, min: 480 },
+            frameRate: { ideal: 30, min: 15 },
+          };
+
           try {
-            // Tentative 1 : Qualité optimisée avec caméra frontale par défaut sur mobile
-            const constraints: MediaStreamConstraints = {
-              audio: true,
-              video:
-                callType === 'video'
-                  ? {
-                      facingMode: 'user',
-                      width: { ideal: 1280 },
-                      height: { ideal: 720 },
-                    }
-                  : false,
-            };
-            mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
+            // Tentative 1 : Qualité optimisée HD + Audio DSP anti-écho/anti-bruit
+            mediaStream = await navigator.mediaDevices.getUserMedia({
+              audio: audioConstraints,
+              video: callType === 'video' ? videoConstraints : false,
+            });
           } catch (e1) {
-            console.warn('Tentative haute résolution échouée, tentative standard...', e1);
+            console.warn('Tentative haute résolution échouée, tentative standard avec DSP...', e1);
             try {
-              // Tentative 2 : Standard
+              // Tentative 2 : Standard avec DSP audio
               mediaStream = await navigator.mediaDevices.getUserMedia({
-                audio: true,
+                audio: { echoCancellation: true, noiseSuppression: true },
                 video: callType === 'video',
               });
             } catch (e2) {
               console.warn('Tentative vidéo standard échouée, tentative audio seul...', e2);
               try {
                 // Tentative 3 : Audio seul
-                mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                mediaStream = await navigator.mediaDevices.getUserMedia({
+                  audio: { echoCancellation: true, noiseSuppression: true },
+                });
                 if (callType === 'video') {
-                  setMediaWarning('Caméra indisponible : l’appel continue sans votre vidéo.');
+                  setMediaWarning('Caméra indisponible ou occupée : l’appel continue en audio haute qualité.');
                 }
               } catch (e3) {
                 console.error('Périphériques audio/vidéo inaccessibles :', e3);
-                setMediaWarning('Microphone et caméra inaccessibles. Vérifiez les autorisations du navigateur.');
+                setMediaWarning('Microphone ou caméra inaccessibles. Veuillez vérifier les autorisations dans votre navigateur ou application.');
               }
             }
           }
@@ -552,6 +562,16 @@ export function ActiveCallRoom({
             <span className="absolute top-3 left-3 text-[11px] font-semibold bg-slate-950/80 backdrop-blur px-2.5 py-1 rounded-full text-indigo-300 border border-slate-700">
               {receiverEmail}
             </span>
+
+            {/* Indicateur de réception audio distante */}
+            <div className="absolute top-3 right-3">
+              <AudioLevelVisualizer
+                stream={remoteStreamRef.current}
+                isMuted={!remoteAudioReceived}
+                label="Audio distant"
+                size="sm"
+              />
+            </div>
           </div>
 
           {/* Mon flux vidéo local */}
@@ -581,6 +601,16 @@ export function ActiveCallRoom({
             <span className="absolute top-3 left-3 text-[11px] font-semibold bg-slate-950/80 backdrop-blur px-2.5 py-1 rounded-full text-slate-300 border border-slate-700">
               Vous ({callerEmail})
             </span>
+
+            {/* VU-Mètre du micro local en temps réel */}
+            <div className="absolute top-3 right-3">
+              <AudioLevelVisualizer
+                stream={stream}
+                isMuted={micMuted}
+                label="Votre micro"
+                size="sm"
+              />
+            </div>
           </div>
         </div>
       )}

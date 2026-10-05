@@ -9,36 +9,29 @@ export function HeaderNav() {
   const supabase = createClient();
 
   useEffect(() => {
-    const fetchUser = async () => {
-      let currentEmail: string | null = null;
-      try {
-        const { data: { user } } = await supabase.auth.getUser();
-        currentEmail = user?.user_metadata?.email || user?.email || null;
-      } catch (e) {}
+    const checkActiveSession = () => {
+      if (typeof window === 'undefined') return;
 
-      if (!currentEmail && typeof window !== 'undefined') {
-        const cookieMatch = document.cookie.match(/yam_user_email=([^;]+)/);
-        if (cookieMatch) {
-          currentEmail = decodeURIComponent(cookieMatch[1]);
-        } else {
-          currentEmail = localStorage.getItem('yam_user_email') || sessionStorage.getItem('yam_user_email');
-        }
+      const pathname = window.location.pathname;
+      if (pathname === '/login') {
+        setEmail(null);
+        return;
       }
 
-      setEmail(currentEmail);
-    };
+      const activeSession = sessionStorage.getItem('yam_session_active') === 'true';
+      const sessionEmail = sessionStorage.getItem('yam_user_email');
+      const cookieMatch = document.cookie.match(/yam_user_email=([^;]+)/);
 
-    fetchUser();
-
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (session?.user) {
-        setEmail(session.user.user_metadata?.email || session.user.email || null);
+      if (activeSession && sessionEmail) {
+        setEmail(sessionEmail);
+      } else if (cookieMatch && activeSession) {
+        setEmail(decodeURIComponent(cookieMatch[1]));
+      } else {
+        setEmail(null);
       }
-    });
-
-    return () => {
-      subscription.unsubscribe();
     };
+
+    checkActiveSession();
   }, [supabase]);
 
   const handleLogout = async () => {
@@ -46,17 +39,21 @@ export function HeaderNav() {
       await supabase.auth.signOut();
     } catch (e) {}
     document.cookie = 'yam_user_email=; path=/; max-age=0;';
+    document.cookie = 'yam_admin_2fa=; path=/; max-age=0;';
     if (typeof window !== 'undefined') {
-      localStorage.clear();
-      sessionStorage.clear();
+      sessionStorage.removeItem('yam_user_email');
+      sessionStorage.removeItem('yam_session_active');
+      sessionStorage.removeItem('yam_admin_2fa');
+      localStorage.removeItem('yam_user_email');
+      localStorage.removeItem('yam_admin_2fa');
     }
     window.location.href = '/login';
   };
 
   if (!email) {
     return (
-      <span className="text-xs rounded-full bg-emerald-950 px-2.5 py-1 text-emerald-400 border border-emerald-800">
-        Session sécurisée
+      <span className="text-xs rounded-full bg-slate-900 px-3 py-1 text-slate-400 border border-slate-800">
+        🔒 Espace Privé
       </span>
     );
   }

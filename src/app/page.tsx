@@ -14,15 +14,21 @@ import {
 } from '@/src/lib/webrtc';
 import { soundManager } from '@/src/lib/sound';
 import { logUserConnection } from '@/src/lib/logger';
+import { PricingPlans } from '@/src/components/subscription/PricingPlans';
+import { getUserUsage, incrementUserUsage, UserUsageInfo } from '@/src/lib/usage';
+import { UsageLimitModal } from '@/src/components/subscription/UsageLimitModal';
 
 type Ambience = 'neutral' | 'love' | 'family' | 'couple' | 'friendship';
 type CallType = 'video' | 'audio';
 
 export default function HomePage() {
   const [currentUserEmail, setCurrentUserEmail] = useState<string | null>(null);
+  const [userUsage, setUserUsage] = useState<UserUsageInfo | null>(null);
+  const [showUsageModal, setShowUsageModal] = useState(false);
   const [targetEmail, setTargetEmail] = useState('');
   const [onlineUsers, setOnlineUsers] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
+  const [showPricing, setShowPricing] = useState(false);
 
   // État de l'appel
   const [isInCall, setIsInCall] = useState(false);
@@ -64,22 +70,27 @@ export default function HomePage() {
     };
   }, []);
 
-  // 2. Vérification de session et authentification
+  // 2. Vérification stricte de session éphémère (Objectif 9 : Réinitialisation à la fermeture)
   useEffect(() => {
     const initAuth = async () => {
       let email: string | null = null;
-      try {
-        const { data: { user } } = await supabase.auth.getUser();
-        email = user?.user_metadata?.email || user?.email || null;
-      } catch (e) {}
 
-      if (!email && typeof window !== 'undefined') {
-        const cookieMatch = document.cookie.match(/yam_user_email=([^;]+)/);
-        if (cookieMatch) {
-          email = decodeURIComponent(cookieMatch[1]);
-        } else {
-          email = localStorage.getItem('yam_user_email') || sessionStorage.getItem('yam_user_email');
+      if (typeof window !== 'undefined') {
+        const activeSession = sessionStorage.getItem('yam_session_active') === 'true';
+        const sessionEmail = sessionStorage.getItem('yam_user_email');
+
+        // Si la session n'est pas active dans cet onglet/cette fenêtre (ex: après fermeture/réouverture)
+        if (!activeSession || !sessionEmail) {
+          document.cookie = 'yam_user_email=; path=/; max-age=0;';
+          document.cookie = 'yam_admin_2fa=; path=/; max-age=0;';
+          try {
+            await supabase.auth.signOut();
+          } catch {}
+          window.location.href = '/login';
+          return;
         }
+
+        email = sessionEmail;
       }
 
       if (!email) {
@@ -89,6 +100,18 @@ export default function HomePage() {
 
       const formattedEmail = email.toLowerCase().trim();
       setCurrentUserEmail(formattedEmail);
+
+      // Chargement du statut d'utilisation et de la licence (Objectif 6)
+      try {
+        const usage = await getUserUsage(formattedEmail);
+        setUserUsage(usage);
+        if (usage.isLocked) {
+          setShowUsageModal(true);
+        }
+      } catch (err) {
+        console.warn('Erreur chargement licence :', err);
+      }
+
       setLoading(false);
 
       // Journalisation de la présence en session
@@ -142,9 +165,13 @@ export default function HomePage() {
       await supabase.auth.signOut();
     } catch (e) {}
     document.cookie = 'yam_user_email=; path=/; max-age=0;';
+    document.cookie = 'yam_admin_2fa=; path=/; max-age=0;';
     if (typeof window !== 'undefined') {
-      localStorage.clear();
-      sessionStorage.clear();
+      sessionStorage.removeItem('yam_user_email');
+      sessionStorage.removeItem('yam_session_active');
+      sessionStorage.removeItem('yam_admin_2fa');
+      localStorage.removeItem('yam_user_email');
+      localStorage.removeItem('yam_admin_2fa');
     }
     window.location.href = '/login';
   };
@@ -154,15 +181,26 @@ export default function HomePage() {
   const isValidTargetEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanTargetEmail);
   const isPeerOnline = isValidTargetEmail && onlineUsers.has(cleanTargetEmail);
 
-  // Démarrer un appel direct
+  // Démarrer un appel direct (avec vérification du quota des 10 utilisations - Objectif 6)
   const handleLaunchCall = async () => {
     if (!isValidTargetEmail || !currentUserEmail) return;
+
+    // 1. Vérification de la limite de 10 utilisations gratuites
+    if (userUsage?.isLocked) {
+      setShowUsageModal(true);
+      return;
+    }
 
     // Déclenche la tonalité d'attente sortante pour l'appelant
     soundManager.startOutgoingRingtone();
 
     setIsInitiator(true);
     setIsInCall(true);
+
+    // Incrémentation du compteur d'utilisation
+    incrementUserUsage(currentUserEmail)
+      .then((updated) => setUserUsage(updated))
+      .catch(() => {});
 
     // Envoi du signal d'appel
     await sendSignal(cleanTargetEmail, {
@@ -174,9 +212,14 @@ export default function HomePage() {
     });
   };
 
-  // Accepter un appel entrant
+  // Accepter un appel entrant (avec vérification de quota)
   const handleAcceptIncomingCall = async () => {
     if (!incomingCall || !currentUserEmail) return;
+
+    if (userUsage?.isLocked) {
+      setShowUsageModal(true);
+      return;
+    }
 
     soundManager.stop();
     setTargetEmail(incomingCall.callerEmail);
@@ -184,6 +227,10 @@ export default function HomePage() {
     setAmbience(incomingCall.ambience as Ambience);
     setIsInitiator(false);
     setIsInCall(true);
+
+    incrementUserUsage(currentUserEmail)
+      .then((updated) => setUserUsage(updated))
+      .catch(() => {});
 
     await sendSignal(incomingCall.callerEmail, {
       type: 'call-accepted',
@@ -296,6 +343,21 @@ export default function HomePage() {
 
   return (
     <main className="min-h-screen flex flex-col bg-slate-950 text-slate-100 pb-12">
+      {/* Modal de limite d'utilisation et achat de licence (Objectif 6) */}
+      {showUsageModal && userUsage && (
+        <UsageLimitModal
+          userUsage={userUsage}
+          onLicenseActivated={async () => {
+            if (currentUserEmail) {
+              const updated = await getUserUsage(currentUserEmail);
+              setUserUsage(updated);
+            }
+            setShowUsageModal(false);
+          }}
+          onClose={() => setShowUsageModal(false)}
+        />
+      )}
+
       {/* Modal d'appel entrant */}
       {incomingCall && (
         <IncomingCallModal
@@ -307,6 +369,22 @@ export default function HomePage() {
         />
       )}
 
+      {/* 1. Bandeau visible d'appel aux dons et achat de licence (Objectif 7) */}
+      <div className="w-full bg-gradient-to-r from-indigo-950 via-purple-950 to-indigo-950 border-b border-indigo-500/40 py-2.5 px-4 shadow-lg">
+        <div className="max-w-4xl mx-auto flex flex-wrap items-center justify-between gap-3 text-xs sm:text-sm">
+          <div className="flex items-center gap-2 text-indigo-200 font-medium">
+            <span className="text-base">⭐</span>
+            <span>Aidez nous à poursuivre notre action en achetant une licence</span>
+          </div>
+          <button
+            onClick={() => setShowPricing(!showPricing)}
+            className="px-3.5 py-1.5 rounded-full bg-indigo-600 hover:bg-indigo-500 font-bold text-xs text-white shadow-md transition-all cursor-pointer"
+          >
+            {showPricing ? '✕ Fermer les tarifs' : '💎 Voir les tarifs & Licence'}
+          </button>
+        </div>
+      </div>
+
       {/* 2. Bannière défilante en haut */}
       <div className="w-full bg-slate-900/60 border-b border-slate-800/80 py-3 px-4">
         <div className="max-w-4xl mx-auto">
@@ -314,9 +392,27 @@ export default function HomePage() {
         </div>
       </div>
 
+      {/* 3. Section Dépliante des Tarifs & Licence */}
+      {showPricing && (
+        <div className="w-full bg-slate-900/95 border-b border-indigo-500/30 p-4 sm:p-6 animate-in fade-in">
+          <div className="max-w-4xl mx-auto space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+              <h3 className="text-base font-bold text-indigo-400">💎 Tarifs des Licences You&Me</h3>
+              <button
+                onClick={() => setShowPricing(false)}
+                className="text-xs text-slate-400 hover:text-white px-2 py-1 rounded bg-slate-800"
+              >
+                ✕ Fermer
+              </button>
+            </div>
+            <PricingPlans />
+          </div>
+        </div>
+      )}
+
       <div className="max-w-4xl w-full mx-auto px-4 sm:px-6 py-6 space-y-6">
-        {/* Barre d'état utilisateur */}
-        <div className="flex flex-wrap items-center justify-between gap-3 bg-slate-900/90 border border-slate-800 p-4 rounded-2xl">
+        {/* Barre d'état utilisateur avec Déconnexion direct & Compteur de 10 utilisations */}
+        <div className="flex flex-wrap items-center justify-between gap-4 bg-slate-900/90 border border-slate-800 p-4 sm:p-5 rounded-2xl shadow-xl">
           <div className="flex items-center gap-3">
             <span className="w-3 h-3 rounded-full bg-emerald-500 animate-pulse" />
             <div>
@@ -325,12 +421,39 @@ export default function HomePage() {
             </div>
           </div>
 
-          <div className="flex items-center gap-3">
+          {/* Compteur d'utilisations (Objectif 6) */}
+          <div className="flex items-center gap-2 sm:gap-3">
+            {userUsage?.hasLicense ? (
+              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-amber-950/80 border border-amber-500/60 text-amber-300 shadow">
+                ⭐ Licence à Vie Active
+              </span>
+            ) : (
+              <div className="flex items-center gap-2 bg-slate-950/80 border border-slate-800 px-3 py-1.5 rounded-xl">
+                <span className="text-xs font-semibold text-slate-300">
+                  🎯 <strong className={userUsage && userUsage.remaining <= 2 ? 'text-red-400' : 'text-indigo-400'}>
+                    {userUsage?.remaining ?? 10} / 10
+                  </strong> gratuits restants
+                </span>
+                <button
+                  onClick={() => setShowPricing(true)}
+                  className="text-[11px] font-bold text-amber-400 hover:text-amber-300 underline cursor-pointer"
+                >
+                  Débloquer
+                </button>
+              </div>
+            )}
+
             <button
               onClick={() => setShowLocalTest(!showLocalTest)}
-              className="text-xs px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 font-semibold transition-all cursor-pointer"
+              className="text-xs px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 font-semibold transition-all cursor-pointer"
             >
-              {showLocalTest ? '✕ Masquer le test' : '🎥 Démarrer un test local'}
+              {showLocalTest ? '✕ Masquer' : '🎥 Test'}
+            </button>
+            <button
+              onClick={handleLogout}
+              className="text-xs px-3.5 py-1.5 rounded-xl bg-red-600 hover:bg-red-500 text-white font-bold shadow transition-all cursor-pointer"
+            >
+              🚪 Déconnexion
             </button>
           </div>
         </div>

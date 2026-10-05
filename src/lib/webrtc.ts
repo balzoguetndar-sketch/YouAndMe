@@ -28,7 +28,19 @@ export const ICE_SERVERS: RTCConfiguration = {
     { urls: 'stun:stun4.l.google.com:19302' },
     { urls: 'stun:global.stun.twilio.com:3478' },
     { urls: 'stun:stun.services.mozilla.com' },
+    { urls: 'stun:stun.cloudflare.com:3478' },
+    // Support des serveurs TURN configurables via variables d'environnement
+    ...(process.env.NEXT_PUBLIC_TURN_URL
+      ? [
+          {
+            urls: process.env.NEXT_PUBLIC_TURN_URL,
+            username: process.env.NEXT_PUBLIC_TURN_USERNAME || undefined,
+            credential: process.env.NEXT_PUBLIC_TURN_CREDENTIAL || undefined,
+          },
+        ]
+      : []),
   ],
+  iceCandidatePoolSize: 10,
 };
 
 /**
