@@ -74,8 +74,11 @@ export async function getUserUsage(email: string): Promise<UserUsageInfo> {
 
     if (!error && data) {
       usageCount = Math.max(usageCount, data.usage_count || 0);
-      const annualExpiry = typeof data.license_key === 'string' && data.license_key.startsWith('stripe-annual:')
-        ? Date.parse(data.license_key.slice('stripe-annual:'.length))
+      const annualPrefix = typeof data.license_key === 'string'
+        ? ['stripe-annual:', 'manual-annual:'].find((prefix) => data.license_key.startsWith(prefix))
+        : undefined;
+      const annualExpiry = annualPrefix
+        ? Date.parse(data.license_key.slice(annualPrefix.length).split('|')[0])
         : null;
 
       if (annualExpiry !== null) {

@@ -7,6 +7,7 @@ import { VideoRoom } from '@/src/components/call/VideoRoom';
 import { BannerManager } from '@/src/app/admin/BannerManager';
 import { PricingToggle } from '@/src/app/admin/PricingToggle';
 import { LogManager } from './LogManager';
+import { LicenseManager } from './LicenseManager';
 
 import { LogoutButton } from './LogoutButton';
 import { CallLauncher } from '@/src/components/call/CallLauncher';
@@ -95,6 +96,8 @@ export default async function AdminPage() {
           <p className="text-2xl font-extrabold text-purple-300">{totalRevenue} €</p>
         </div>
       </div>
+
+      <LicenseManager />
 
       {/* Section 1 : Commutateur de la Grille Tarifaire */}
       <section className="space-y-3">
