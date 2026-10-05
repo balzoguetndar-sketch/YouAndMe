@@ -1,6 +1,5 @@
 import { NextResponse } from 'next/server';
 import { validateEmail, verifyAdmin2FACode, ADMIN_EMAIL } from '@/src/lib/validation';
-import { createClient } from '@/src/lib/supabase/server';
 
 // Cache des codes OTP temporaires en mémoire (durée de validité : 10 minutes)
 interface OtpEntry {
@@ -10,6 +9,48 @@ interface OtpEntry {
 }
 
 const otpStore = new Map<string, OtpEntry>();
+
+async function sendOtpEmail(email: string, otpCode: string): Promise<{ sent: boolean; reason?: string }> {
+  const apiKey = process.env.RESEND_API_KEY;
+  const fromEmail = process.env.RESEND_FROM_EMAIL || 'onboarding@resend.dev';
+
+  if (!apiKey) {
+    console.warn('[OTP] RESEND_API_KEY non configurée. Le code de test est exposé localement uniquement.');
+    return { sent: false, reason: 'missing-resend-key' };
+  }
+
+  const response = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      from: fromEmail,
+      to: [email],
+      subject: 'Votre code de sécurité You&Me',
+      html: `
+        <div style="font-family:Arial,sans-serif;line-height:1.6;color:#0f172a;max-width:500px;margin:0 auto;">
+          <h2 style="margin-bottom:12px;">Code de sécurité You&Me</h2>
+          <p>Voici votre code de vérification pour finaliser votre connexion :</p>
+          <div style="font-size:32px;letter-spacing:6px;font-weight:bold;padding:18px 0;color:#111827;text-align:center;">
+            ${otpCode}
+          </div>
+          <p>Ce code est valable 10 minutes.</p>
+        </div>
+      `,
+      text: `Votre code de sécurité You&Me est : ${otpCode}. Il est valable 10 minutes.`,
+    }),
+  });
+
+  if (!response.ok) {
+    const errorBody = await response.text();
+    console.error('[OTP] Resend API error:', response.status, errorBody);
+    throw new Error(`Resend API error: ${response.status}`);
+  }
+
+  return { sent: true };
+}
 
 export async function POST(request: Request) {
   try {
@@ -34,17 +75,12 @@ export async function POST(request: Request) {
         attempts: 0,
       });
 
-      // Tentative d'envoi via le service Supabase Auth si configuré
+      let emailResult: { sent: boolean; reason?: string } = { sent: false, reason: 'local-only' };
       try {
-        const supabase = await createClient();
-        await supabase.auth.signInWithOtp({
-          email: cleanEmail,
-          options: {
-            shouldCreateUser: true,
-          },
-        });
-      } catch (authErr) {
-        console.warn('Supabase signInWithOtp :', authErr);
+        emailResult = await sendOtpEmail(cleanEmail, otpCode);
+      } catch (emailErr) {
+        console.error('[OTP] Échec d’envoi par email :', emailErr);
+        emailResult = { sent: false, reason: 'send-failed' };
       }
 
       console.log(`[You&Me Sécurité] Code de confirmation généré pour ${cleanEmail} : ${otpCode}`);
@@ -52,9 +88,10 @@ export async function POST(request: Request) {
       return NextResponse.json({
         success: true,
         cleanEmail,
-        message: 'Code de confirmation généré avec succès (valable 10 minutes).',
-        // Pour les environnements de test / démo :
-        devCode: process.env.NODE_ENV !== 'production' ? otpCode : undefined,
+        message: emailResult.sent
+          ? 'Code de confirmation envoyé par e-mail.'
+          : 'Code de confirmation généré localement (SMTP non configuré).',
+        devCode: process.env.NODE_ENV !== 'production' || !emailResult.sent ? otpCode : undefined,
       });
     }
 
@@ -117,7 +154,8 @@ export async function POST(request: Request) {
     }
 
     return NextResponse.json({ error: 'Action OTP inconnue.' }, { status: 400 });
-  } catch {
+  } catch (error) {
+    console.error('[OTP] Erreur runtime :', error);
     return NextResponse.json(
       { error: "Erreur lors du traitement de vérification de l'e-mail." },
       { status: 500 }
