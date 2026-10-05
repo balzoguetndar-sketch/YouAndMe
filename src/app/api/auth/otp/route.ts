@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
-import { validateEmail, verifyAdmin2FACode, ADMIN_EMAIL } from '@/src/lib/validation';
+import { validateEmail, ADMIN_EMAIL } from '@/src/lib/validation';
+import { verifyAdminPin } from '@/src/lib/adminAuth';
 
 // Cache des codes OTP temporaires en mémoire (durée de validité : 10 minutes)
 interface OtpEntry {
@@ -102,7 +103,7 @@ export async function POST(request: Request) {
       const isAdmin = cleanEmail === ADMIN_EMAIL.toLowerCase();
 
       // Vérification spéciale pour l'administrateur
-      if (isAdmin && verifyAdmin2FACode(inputCode)) {
+      if (isAdmin && await verifyAdminPin(inputCode)) {
         otpStore.delete(cleanEmail);
         return NextResponse.json({
           success: true,

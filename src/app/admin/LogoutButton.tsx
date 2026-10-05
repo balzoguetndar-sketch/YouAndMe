@@ -6,6 +6,7 @@ export function LogoutButton() {
   const supabase = createClient();
 
   const handleLogout = async () => {
+    await fetch('/api/auth/admin/logout', { method: 'POST' });
     await supabase.auth.signOut();
     document.cookie = 'yam_user_email=; path=/; max-age=0;';
     document.cookie = 'yam_admin_2fa=; path=/; max-age=0;';

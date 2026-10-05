@@ -1,7 +1,6 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { createClient } from '@/src/lib/supabase/clients';
 
 export type ConnectionLog = {
   id: string;
@@ -16,6 +15,15 @@ interface LogManagerProps {
   initialLogs?: ConnectionLog[];
 }
 
+async function loadLogs(): Promise<ConnectionLog[]> {
+  const response = await fetch('/api/admin/logs');
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(data.error || 'Impossible de charger les journaux.');
+  }
+  return Array.isArray(data.logs) ? data.logs : [];
+}
+
 export function LogManager({ initialLogs = [] }: LogManagerProps) {
   const [logs, setLogs] = useState<ConnectionLog[]>(initialLogs);
   const [loading, setLoading] = useState(initialLogs.length === 0);
@@ -25,31 +33,10 @@ export function LogManager({ initialLogs = [] }: LogManagerProps) {
   const [endDate, setEndDate] = useState('');
   const [feedbackMsg, setFeedbackMsg] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
 
-  const supabase = createClient();
-
   const fetchLogs = async () => {
     setLoading(true);
     try {
-      // 1. Appel prioritaire de l'API admin sécurisée (contourne RLS)
-      const res = await fetch('/api/admin/logs');
-      if (res.ok) {
-        const data = await res.json();
-        if (Array.isArray(data.logs)) {
-          setLogs(data.logs);
-          setLoading(false);
-          return;
-        }
-      }
-
-      // 2. Fallback direct via client Supabase
-      const { data, error } = await supabase
-        .from('connection_logs')
-        .select('*')
-        .order('created_at', { ascending: false });
-
-      if (!error && data) {
-        setLogs(data);
-      }
+      setLogs(await loadLogs());
     } catch (e) {
       console.warn('Erreur chargement logs :', e);
     } finally {
@@ -58,32 +45,24 @@ export function LogManager({ initialLogs = [] }: LogManagerProps) {
   };
 
   useEffect(() => {
-    if (initialLogs.length === 0) {
-      fetchLogs();
+    if (initialLogs.length > 0) {
+      return;
     }
 
-    // Écoute des nouvelles connexions en temps réel
-    const channel = supabase
-      .channel('connection_logs_realtime')
-      .on(
-        'postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'connection_logs' },
-        (payload) => {
-          if (payload.new) {
-            setLogs((prev) => {
-              const newLog = payload.new as ConnectionLog;
-              if (prev.some((l) => l.id === newLog.id)) return prev;
-              return [newLog, ...prev];
-            });
-          }
-        }
-      )
-      .subscribe();
+    let isMounted = true;
+    loadLogs()
+      .then((loadedLogs) => {
+        if (isMounted) setLogs(loadedLogs);
+      })
+      .catch((error) => console.warn('Erreur chargement logs :', error))
+      .finally(() => {
+        if (isMounted) setLoading(false);
+      });
 
     return () => {
-      supabase.removeChannel(channel);
+      isMounted = false;
     };
-  }, [supabase]);
+  }, [initialLogs.length]);
 
   const showFeedback = (text: string, type: 'success' | 'error' = 'success') => {
     setFeedbackMsg({ text, type });
@@ -109,8 +88,8 @@ export function LogManager({ initialLogs = [] }: LogManagerProps) {
 
       showFeedback('✅ Purge des logs > 24h effectuée avec succès.');
       fetchLogs();
-    } catch (err: any) {
-      showFeedback(`Erreur : ${err.message}`, 'error');
+    } catch (error: unknown) {
+      showFeedback(`Erreur : ${error instanceof Error ? error.message : 'Erreur inconnue'}`, 'error');
     } finally {
       setPurging(false);
     }
@@ -148,8 +127,8 @@ export function LogManager({ initialLogs = [] }: LogManagerProps) {
       setStartDate('');
       setEndDate('');
       fetchLogs();
-    } catch (err: any) {
-      showFeedback(`Erreur : ${err.message}`, 'error');
+    } catch (error: unknown) {
+      showFeedback(`Erreur : ${error instanceof Error ? error.message : 'Erreur inconnue'}`, 'error');
     } finally {
       setPurging(false);
     }
@@ -174,8 +153,8 @@ export function LogManager({ initialLogs = [] }: LogManagerProps) {
 
       showFeedback('✅ Historique complet vidé.');
       fetchLogs();
-    } catch (err: any) {
-      showFeedback(`Erreur : ${err.message}`, 'error');
+    } catch (error: unknown) {
+      showFeedback(`Erreur : ${error instanceof Error ? error.message : 'Erreur inconnue'}`, 'error');
     } finally {
       setPurging(false);
     }
@@ -211,7 +190,7 @@ export function LogManager({ initialLogs = [] }: LogManagerProps) {
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 pb-3">
           <div>
             <h3 className="text-sm sm:text-base font-bold text-slate-100 flex items-center gap-2">
-              <span>🧹</span> Outils de Purge & Nettoyage de l'Historique
+              <span>🧹</span> Outils de Purge & Nettoyage de l&apos;Historique
             </h3>
             <p className="text-xs text-slate-400 mt-0.5">
               Gérez le cycle de rétention des données de connexion (purge 24h ou sélection de période).

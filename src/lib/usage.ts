@@ -68,13 +68,22 @@ export async function getUserUsage(email: string): Promise<UserUsageInfo> {
     const supabase = createClient();
     const { data, error } = await supabase
       .from('user_usage')
-      .select('usage_count, has_license')
+      .select('usage_count, has_license, license_key')
       .eq('email', cleanEmail)
       .maybeSingle();
 
     if (!error && data) {
       usageCount = Math.max(usageCount, data.usage_count || 0);
-      if (data.has_license) {
+      const annualExpiry = typeof data.license_key === 'string' && data.license_key.startsWith('stripe-annual:')
+        ? Date.parse(data.license_key.slice('stripe-annual:'.length))
+        : null;
+
+      if (annualExpiry !== null) {
+        hasLicense = Number.isFinite(annualExpiry) && annualExpiry > Date.now();
+        if (typeof window !== 'undefined') {
+          localStorage.setItem(`yam_license_${cleanEmail}`, hasLicense ? 'true' : 'false');
+        }
+      } else if (data.has_license) {
         hasLicense = true;
       }
       // Mise à jour du cache local

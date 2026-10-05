@@ -1,10 +1,15 @@
 import { NextResponse } from 'next/server';
 import Stripe from 'stripe';
-import { createClient } from '@/src/lib/supabase/server';
+import { createClient } from '@supabase/supabase-js';
+import { validateEmail } from '@/src/lib/validation';
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
     apiVersion: '2023-10-16' as Stripe.LatestApiVersion,
 });
+const supabaseAdmin = createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!
+);
 
 export async function POST(request: Request) {
     const body = await request.text();
@@ -27,15 +32,49 @@ export async function POST(request: Request) {
     // Événement déclenché quand le paiement est validé
     if (event.type === 'checkout.session.completed') {
         const session = event.data.object as Stripe.Checkout.Session;
-        const supabase = await createClient();
+        if (session.payment_status !== 'paid') {
+            return NextResponse.json({ received: true });
+        }
 
-        const donorEmail = session.metadata?.donor_email || session.customer_details?.email || 'Donateur Anonyme';
+        const donorEmail = session.metadata?.userEmail || session.customer_details?.email || session.customer_email || '';
+        const emailValidation = validateEmail(donorEmail);
+        const planId = session.metadata?.planId;
         const amount = session.amount_total ? session.amount_total / 100 : 0;
 
-        // Insertion automatique du vrai don dans la table Supabase
-        await supabase.from('donations').insert([
+        if (emailValidation.isValid && ['ad_supported', 'no_ads', 'supporter'].includes(planId || '')) {
+            const cleanEmail = emailValidation.cleanEmail;
+            const { data: existingUsage, error: lookupError } = await supabaseAdmin
+                .from('user_usage')
+                .select('usage_count')
+                .eq('email', cleanEmail)
+                .maybeSingle();
+
+            if (lookupError) {
+                console.error('Erreur de lecture du quota après paiement Stripe:', lookupError.message);
+                return NextResponse.json({ error: 'License activation failed' }, { status: 500 });
+            }
+
+            const isSupporter = planId === 'supporter';
+            const expiresAt = new Date();
+            expiresAt.setFullYear(expiresAt.getFullYear() + 1);
+            const licenseKey = isSupporter ? 'stripe-supporter' : `stripe-annual:${expiresAt.toISOString()}`;
+            const { error: licenseError } = await supabaseAdmin.from('user_usage').upsert({
+                email: cleanEmail,
+                usage_count: existingUsage?.usage_count || 0,
+                has_license: true,
+                license_key: licenseKey,
+                activated_at: new Date().toISOString(),
+            }, { onConflict: 'email' });
+
+            if (licenseError) {
+                console.error('Erreur d’activation de licence Stripe:', licenseError.message);
+                return NextResponse.json({ error: 'License activation failed' }, { status: 500 });
+            }
+        }
+
+        await supabaseAdmin.from('donations').insert([
             {
-                donor_email: donorEmail,
+                donor_email: donorEmail || 'Donateur Anonyme',
                 amount: amount,
                 stripe_payment_id: session.payment_intent as string,
             },

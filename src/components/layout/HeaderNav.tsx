@@ -36,6 +36,7 @@ export function HeaderNav() {
 
   const handleLogout = async () => {
     try {
+      await fetch('/api/auth/admin/logout', { method: 'POST' });
       await supabase.auth.signOut();
     } catch (e) {}
     document.cookie = 'yam_user_email=; path=/; max-age=0;';

@@ -1,36 +1,42 @@
 'use client';
 
 import { useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { createClient } from '@/src/lib/supabase/clients';
 import { logUserConnection } from '@/src/lib/logger';
 import { BannerCarousel } from '@/src/components/banner/BannerCarousel';
 import { PrivacyManifesto } from '@/src/components/layout/PrivacyManifesto';
-import { validateEmail, ADMIN_EMAIL, verifyAdmin2FACode } from '@/src/lib/validation';
+import { validateEmail, ADMIN_EMAIL } from '@/src/lib/validation';
 
 export default function LoginPage() {
   const [email, setEmail] = useState('');
   const [code, setCode] = useState('');
-  const [step, setStep] = useState<'email' | 'security_code'>('email');
+  const [step, setStep] = useState<'email' | 'admin_code'>('email');
   const [error, setError] = useState<string | null>(null);
   const [infoMessage, setInfoMessage] = useState<string | null>(null);
   const [suggestedEmail, setSuggestedEmail] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
+  const router = useRouter();
   const supabase = createClient();
 
   // Étape 1 : Saisie de l'adresse e-mail
-  const handleEmailSubmit = async (e: React.FormEvent) => {
+  const handleEmailSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setError(null);
     setInfoMessage(null);
     setSuggestedEmail(null);
 
+    const submittedEmail = new FormData(e.currentTarget).get('email');
+    const emailToValidate = typeof submittedEmail === 'string' ? submittedEmail : email;
+
     // 1. Validation syntaxique
-    const localValidation = validateEmail(email);
+    const localValidation = validateEmail(emailToValidate);
     if (!localValidation.isValid) {
       setError("Cet e-mail n'existe pas ou comporte une erreur de saisie. Recommencez, s'il vous plaît.");
       return;
     }
+    setEmail(localValidation.cleanEmail);
 
     setLoading(true);
 
@@ -65,30 +71,29 @@ export default function LoginPage() {
 
       const cleanEmail = typeof data?.cleanEmail === 'string' ? data.cleanEmail : localValidation.cleanEmail;
 
-      // L'administrateur garde un parcours dédié avant l'OTP standard.
+      // L'administrateur conserve son parcours de vérification dédié.
       if (data.isAdmin || cleanEmail === ADMIN_EMAIL.toLowerCase()) {
         setLoading(false);
-        setStep('security_code');
+        setStep('admin_code');
         setInfoMessage('Saisissez votre code de sécurité pour déverrouiller votre session.');
         return;
       }
 
-      // Envoi du code de sécurité pour l'utilisateur
-      const otpRes = await fetch('/api/auth/otp', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'send', email: cleanEmail }),
-      });
+      document.cookie = `yam_user_email=${encodeURIComponent(cleanEmail)}; path=/; SameSite=Lax`;
+      localStorage.removeItem('yam_user_email');
+      sessionStorage.setItem('yam_user_email', cleanEmail);
+      sessionStorage.setItem('yam_session_active', 'true');
 
-      const otpData = await otpRes.json();
-      setLoading(false);
+      supabase.auth
+        .signInAnonymously({
+          options: {
+            data: { email: cleanEmail },
+          },
+        })
+        .catch(() => {});
 
-      if (otpRes.ok && otpData.success) {
-        setStep('security_code');
-        setInfoMessage('Un code de sécurité a été envoyé. Saisissez-le pour continuer.');
-      } else {
-        setError(otpData.error || "Cet e-mail n'existe pas ou comporte une erreur de saisie. Recommencez, s'il vous plaît.");
-      }
+      await logUserConnection(cleanEmail);
+      router.push('/');
     } catch (err: unknown) {
       setLoading(false);
       const message = err instanceof Error ? err.message : 'Vérifiez votre connexion internet.';
@@ -96,7 +101,7 @@ export default function LoginPage() {
     }
   };
 
-  // Étape 2 : Validation du code de sécurité (discrète et uniforme)
+  // Vérification réservée à l'administrateur
   const handleCodeSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
@@ -113,59 +118,29 @@ export default function LoginPage() {
       const cleanEmail = email.trim().toLowerCase();
       const isAdmin = cleanEmail === ADMIN_EMAIL.toLowerCase();
 
-      if (isAdmin) {
-        if (!verifyAdmin2FACode(cleanCode)) {
-          setLoading(false);
-          setError('Code de sécurité incorrect. Veuillez réessayer.');
-          return;
-        }
-
-        document.cookie = `yam_user_email=${encodeURIComponent(cleanEmail)}; path=/; SameSite=Lax`;
-        document.cookie = `yam_admin_2fa=verified; path=/; SameSite=Lax`;
-
-        if (typeof window !== 'undefined') {
-          localStorage.removeItem('yam_user_email');
-          localStorage.removeItem('yam_admin_2fa');
-          sessionStorage.setItem('yam_user_email', cleanEmail);
-          sessionStorage.setItem('yam_session_active', 'true');
-          sessionStorage.setItem('yam_admin_2fa', 'verified');
-        }
-
-        supabase.auth
-          .signInAnonymously({
-            options: {
-              data: { email: cleanEmail },
-            },
-          })
-          .catch(() => {});
-
-        await logUserConnection(cleanEmail);
-        window.location.href = '/admin';
+      if (!isAdmin) {
+        setLoading(false);
+        setError('Ce code est réservé à l’administrateur.');
         return;
       }
 
-      // Cas Utilisateur Standard (Vérification OTP)
-      const res = await fetch('/api/auth/otp', {
+      const adminResponse = await fetch('/api/auth/admin', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'verify', email: cleanEmail, code: cleanCode }),
+        body: JSON.stringify({ email: cleanEmail, code: cleanCode }),
       });
-
-      const data = await res.json();
-
-      if (!res.ok || !data.success) {
+      const adminData = await adminResponse.json();
+      if (!adminResponse.ok || !adminData.success) {
         setLoading(false);
-        setError(data.error || 'Code de sécurité incorrect. Veuillez réessayer.');
+        setError(adminData.error || 'Code de sécurité incorrect. Veuillez réessayer.');
         return;
       }
 
-      // Session validée
       document.cookie = `yam_user_email=${encodeURIComponent(cleanEmail)}; path=/; SameSite=Lax`;
-      if (typeof window !== 'undefined') {
-        localStorage.removeItem('yam_user_email');
-        sessionStorage.setItem('yam_user_email', cleanEmail);
-        sessionStorage.setItem('yam_session_active', 'true');
-      }
+      document.cookie = 'yam_admin_2fa=; path=/; max-age=0;';
+      localStorage.removeItem('yam_user_email');
+      sessionStorage.setItem('yam_user_email', cleanEmail);
+      sessionStorage.setItem('yam_session_active', 'true');
 
       supabase.auth
         .signInAnonymously({
@@ -176,35 +151,10 @@ export default function LoginPage() {
         .catch(() => {});
 
       await logUserConnection(cleanEmail);
-      window.location.href = data.isAdmin ? '/admin' : '/';
+      router.push('/admin');
     } catch {
       setLoading(false);
       setError('Erreur lors de la validation du code.');
-    }
-  };
-
-  // Renvoyer un code de sécurité
-  const handleResendCode = async () => {
-    setError(null);
-    setInfoMessage(null);
-    setLoading(true);
-    try {
-      const cleanEmail = email.trim().toLowerCase();
-      const res = await fetch('/api/auth/otp', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'send', email: cleanEmail }),
-      });
-      const data = await res.json();
-      setLoading(false);
-      if (res.ok && data.success) {
-        setInfoMessage('Un nouveau code de sécurité a été envoyé.');
-      } else {
-        setError(data.error || "Impossible de renvoyer le code.");
-      }
-    } catch {
-      setLoading(false);
-      setError('Erreur lors de la demande de renvoi.');
     }
   };
 
@@ -220,7 +170,7 @@ export default function LoginPage() {
         <div className="text-center space-y-2">
           <h1 className="text-3xl font-extrabold tracking-tight text-indigo-400">You&Me</h1>
           <p className="text-xs sm:text-sm text-slate-400">
-            {step === 'security_code'
+            {step === 'admin_code'
               ? 'Accès sécurisé à votre espace'
               : 'Accès direct & sécurisé à votre espace de communication'}
           </p>
@@ -265,9 +215,13 @@ export default function LoginPage() {
               </label>
               <input
                 id="email"
+                name="email"
                 type="email"
                 required
                 autoComplete="email"
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
                 value={email}
                 onChange={(e) => {
                   setEmail(e.target.value);
@@ -283,7 +237,7 @@ export default function LoginPage() {
 
             <button
               type="submit"
-              disabled={loading || !email.trim()}
+              disabled={loading}
               className="w-full flex justify-center py-3.5 px-4 rounded-xl shadow-lg text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-500 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50 transition-all cursor-pointer"
             >
               {loading ? 'Vérification...' : 'Continuer vers You&Me'}
@@ -291,8 +245,8 @@ export default function LoginPage() {
           </form>
         )}
 
-        {/* ÉTAPE 2 : Saisie du code de sécurité (Discrète et Uniforme) */}
-        {step === 'security_code' && (
+        {/* Saisie du code de sécurité administrateur */}
+        {step === 'admin_code' && (
           <form onSubmit={handleCodeSubmit} className="space-y-5" noValidate>
             <div className="p-3.5 rounded-xl bg-slate-950 border border-slate-800 text-xs text-slate-300 space-y-1">
               <p className="text-[11px] text-slate-400">
@@ -302,7 +256,7 @@ export default function LoginPage() {
 
             <div>
               <label htmlFor="securityCode" className="block text-xs sm:text-sm font-medium text-slate-200 mb-1.5">
-                Code de sécurité
+                Code administrateur
               </label>
               <input
                 id="securityCode"
@@ -318,7 +272,7 @@ export default function LoginPage() {
                 placeholder="••••••"
               />
               <p className="text-[11px] text-slate-500 mt-1 text-center">
-                Saisissez votre code pour continuer
+                Saisissez votre code pour accéder à l’administration
               </p>
             </div>
 
@@ -328,19 +282,10 @@ export default function LoginPage() {
                 disabled={loading || !code.trim()}
                 className="w-full flex justify-center py-3.5 px-4 rounded-xl shadow-lg text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-500 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50 transition-all cursor-pointer"
               >
-                {loading ? 'Validation...' : 'Valider et Accéder à You&Me'}
+                {loading ? 'Validation...' : 'Valider et accéder à l’administration'}
               </button>
 
               <div className="flex items-center justify-between gap-2 pt-1">
-                <button
-                  type="button"
-                  onClick={handleResendCode}
-                  disabled={loading}
-                  className="text-xs text-indigo-400 hover:text-indigo-300 underline cursor-pointer"
-                >
-                  🔄 Renvoyer un code
-                </button>
-
                 <button
                   type="button"
                   onClick={() => {
@@ -351,7 +296,7 @@ export default function LoginPage() {
                   }}
                   className="text-xs text-slate-400 hover:text-slate-200 cursor-pointer"
                 >
-                  ← Changer d'e-mail
+                  ← Changer d&apos;e-mail
                 </button>
               </div>
             </div>

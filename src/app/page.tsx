@@ -17,6 +17,7 @@ import { logUserConnection } from '@/src/lib/logger';
 import { PricingPlans } from '@/src/components/subscription/PricingPlans';
 import { getUserUsage, incrementUserUsage, UserUsageInfo } from '@/src/lib/usage';
 import { UsageLimitModal } from '@/src/components/subscription/UsageLimitModal';
+import { ADMIN_EMAIL } from '@/src/lib/validation';
 
 type Ambience = 'neutral' | 'love' | 'family' | 'couple' | 'friendship';
 type CallType = 'video' | 'audio';
@@ -25,6 +26,7 @@ export default function HomePage() {
   const [currentUserEmail, setCurrentUserEmail] = useState<string | null>(null);
   const [userUsage, setUserUsage] = useState<UserUsageInfo | null>(null);
   const [showUsageModal, setShowUsageModal] = useState(false);
+  const [isAdminUser, setIsAdminUser] = useState(false);
   const [targetEmail, setTargetEmail] = useState('');
   const [onlineUsers, setOnlineUsers] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
@@ -101,6 +103,15 @@ export default function HomePage() {
       const formattedEmail = email.toLowerCase().trim();
       setCurrentUserEmail(formattedEmail);
 
+      try {
+        const adminSession = await fetch('/api/auth/admin/session', { cache: 'no-store' });
+        setIsAdminUser(
+          formattedEmail === ADMIN_EMAIL.toLowerCase() && adminSession.ok
+        );
+      } catch {
+        setIsAdminUser(false);
+      }
+
       // Chargement du statut d'utilisation et de la licence (Objectif 6)
       try {
         const usage = await getUserUsage(formattedEmail);
@@ -161,6 +172,9 @@ export default function HomePage() {
 
   const handleLogout = async () => {
     soundManager.stop();
+    try {
+      await fetch('/api/auth/admin/logout', { method: 'POST' });
+    } catch {}
     try {
       await supabase.auth.signOut();
     } catch (e) {}
@@ -434,15 +448,17 @@ export default function HomePage() {
                     {userUsage?.remaining ?? 10} / 10
                   </strong> gratuits restants
                 </span>
-                <button
-                  onClick={() => setShowPricing(true)}
-                  className="text-[11px] font-bold text-amber-400 hover:text-amber-300 underline cursor-pointer"
-                >
-                  Débloquer
-                </button>
               </div>
             )}
 
+            {isAdminUser && (
+              <button
+                onClick={() => setShowPricing(true)}
+                className="text-[11px] font-bold text-amber-400 hover:text-amber-300 underline cursor-pointer"
+              >
+                Débloquer
+              </button>
+            )}
             <button
               onClick={() => setShowLocalTest(!showLocalTest)}
               className="text-xs px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 font-semibold transition-all cursor-pointer"

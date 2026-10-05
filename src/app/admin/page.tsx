@@ -1,8 +1,7 @@
-import { createClient } from '@/src/lib/supabase/server';
 import { createClient as createAdminClient } from '@supabase/supabase-js';
 import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
-import { ADMIN_EMAIL } from '@/src/lib/validation';
+import { ADMIN_SESSION_COOKIE, verifyAdminSessionToken } from '@/src/lib/adminAuth';
 import { LiveUsersManager } from '@/src/app/admin/LiveUsersManager';
 import { VideoRoom } from '@/src/components/call/VideoRoom';
 import { BannerManager } from '@/src/app/admin/BannerManager';
@@ -20,24 +19,9 @@ const supabaseAdmin = createAdminClient(
 
 export default async function AdminPage() {
   // ... le reste du code reste identique
-  const supabase = await createClient();
   const cookieStore = await cookies();
-
-  let authEmail: string | null = null;
-  try {
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    authEmail = user?.user_metadata?.email || user?.email || null;
-  } catch { }
-
-  const rawCookie: string | undefined = cookieStore.get('yam_user_email')?.value;
-  const cookieEmail: string | null = rawCookie ? decodeURIComponent(rawCookie).toLowerCase().trim() : null;
-  const userEmail: string = (authEmail || cookieEmail || '').toLowerCase().trim();
-  const admin2FA: string | undefined = cookieStore.get('yam_admin_2fa')?.value;
-
-  // VERIFICATION STRICTE : Accès restreint au compte administrateur avec 2FA validé
-  if (userEmail !== ADMIN_EMAIL.toLowerCase() || admin2FA !== 'verified') {
+  const userEmail = await verifyAdminSessionToken(cookieStore.get(ADMIN_SESSION_COOKIE)?.value);
+  if (!userEmail) {
     redirect('/login');
   }
 
@@ -48,7 +32,7 @@ export default async function AdminPage() {
     .order('created_at', { ascending: false });
 
   // Récupération des bannières
-  const { data: banners } = await supabase
+  const { data: banners } = await supabaseAdmin
     .from('banners')
     .select('*')
     .order('created_at', { ascending: false });
@@ -136,7 +120,7 @@ export default async function AdminPage() {
       {/* Section 5 : Gestion & Purge des Journaux de Connexions */}
       <section className="space-y-4">
         <h2 className="text-base sm:text-lg font-bold text-slate-200 flex items-center gap-2">
-          <span>📋</span> Gestion de l'Historique & Purge des Logs
+                  <span>📋</span> Gestion de l&apos;Historique & Purge des Logs
         </h2>
         <LogManager initialLogs={logs || []} />
       </section>

@@ -77,20 +77,3 @@ export function validateEmail(email: string): { isValid: boolean; error?: string
 }
 
 export const ADMIN_EMAIL = 'balzoguetndar@gmail.com';
-
-/**
- * Vérification du code 2FA pour l'administrateur
- * Priorité au code configuré dans .env.local (ADMIN_2FA_PIN ou NEXT_PUBLIC_ADMIN_2FA_PIN)
- */
-export function verifyAdmin2FACode(code: string): boolean {
-  const cleanCode = (code || '').trim();
-  const configuredPin = process.env.NEXT_PUBLIC_ADMIN_2FA_PIN || process.env.ADMIN_2FA_PIN;
-
-  // Accepte le code configuré ou le code par défaut
-  const validCodes = [
-    (configuredPin || '').trim(),
-    '690858', // Code initial
-  ].filter(Boolean);
-
-  return validCodes.includes(cleanCode);
-}

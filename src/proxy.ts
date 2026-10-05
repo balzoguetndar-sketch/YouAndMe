@@ -1,44 +1,13 @@
-import { createServerClient } from '@supabase/ssr';
 import { NextResponse, type NextRequest } from 'next/server';
-import { validateEmail, ADMIN_EMAIL } from '@/src/lib/validation';
+import { validateEmail } from '@/src/lib/validation';
+import { ADMIN_SESSION_COOKIE, verifyAdminSessionToken } from '@/src/lib/adminAuth';
 
 export async function proxy(request: NextRequest) {
-  let response = NextResponse.next({
+  const response = NextResponse.next({
     request: {
       headers: request.headers,
     },
   });
-
-  const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      cookies: {
-        getAll() {
-          return request.cookies.getAll();
-        },
-        setAll(cookiesToSet) {
-          cookiesToSet.forEach(({ name, value }) =>
-            request.cookies.set(name, value)
-          );
-          response = NextResponse.next({
-            request,
-          });
-          cookiesToSet.forEach(({ name, value, options }) =>
-            response.cookies.set(name, value, options)
-          );
-        },
-      },
-    }
-  );
-
-  let authEmail: string | null = null;
-  try {
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    authEmail = user?.user_metadata?.email || user?.email || null;
-  } catch {}
 
   const rawCookieEmail = request.cookies.get('yam_user_email')?.value;
   const rawEmail = rawCookieEmail ? decodeURIComponent(rawCookieEmail) : '';
@@ -51,11 +20,11 @@ export async function proxy(request: NextRequest) {
   const isAuthCallback = pathname.startsWith('/auth');
   const isApiRoute = pathname.startsWith('/api');
   const isAdminRoute = pathname.startsWith('/admin');
-  const admin2FA = request.cookies.get('yam_admin_2fa')?.value;
 
-  // 1. Protection stricte de l'Espace Administrateur (Email admin + 2FA vérifié)
+  // Proxy check is a fast gate; the page and admin APIs verify the signed session too.
   if (isAdminRoute) {
-    if (!isValid || cleanEmail !== ADMIN_EMAIL.toLowerCase() || admin2FA !== 'verified') {
+    const adminEmail = await verifyAdminSessionToken(request.cookies.get(ADMIN_SESSION_COOKIE)?.value);
+    if (!adminEmail || !isValid || cleanEmail !== adminEmail) {
       return NextResponse.redirect(new URL('/login', request.url));
     }
     return response;

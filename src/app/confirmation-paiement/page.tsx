@@ -17,14 +17,14 @@ function ConfirmationContent() {
                     </svg>
                 </div>
 
-                <h1 className="text-2xl font-bold text-white">Paiement Réussi !</h1>
+                <h1 className="text-2xl font-bold text-white">Paiement reçu</h1>
 
                 <div className="space-y-3 text-slate-300 text-sm leading-relaxed">
                     <p>
-                        Merci pour votre souscription à la licence **You&Me**.
+                        Après confirmation par Stripe, votre formule sera activée automatiquement sur cette adresse e-mail.
                     </p>
                     <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 text-amber-400 font-medium text-xs">
-                        📧 Un e-mail contenant votre clé de licence et le lien de téléchargement vient de vous être envoyé par l&apos;administrateur.
+                        Vos appels gratuits déjà utilisés restent comptabilisés. L&apos;accès annuel est valable un an ; le soutien au projet donne un accès permanent.
                     </div>
                 </div>
 
@@ -39,7 +39,7 @@ function ConfirmationContent() {
                         href="/"
                         className="inline-block w-full bg-indigo-600 hover:bg-indigo-500 text-white font-semibold py-3 px-6 rounded-xl transition-colors text-sm shadow-lg"
                     >
-                        Retourner à l'accueil
+                        Retourner à l&apos;accueil
                     </Link>
                 </div>
             </div>

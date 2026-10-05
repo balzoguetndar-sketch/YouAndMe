@@ -1,7 +1,6 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { createClient } from '@/src/lib/supabase/clients';
 
 type Banner = {
   id: string;
@@ -17,6 +16,15 @@ type Banner = {
   created_at: string;
 };
 
+async function loadBannerList(): Promise<Banner[]> {
+  const response = await fetch('/api/admin/banners');
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(data.error || 'Impossible de charger les bannières.');
+  }
+  return Array.isArray(data.banners) ? data.banners : [];
+}
+
 export function BannerManager() {
   const [banners, setBanners] = useState<Banner[]>([]);
   const [loadingList, setLoadingList] = useState(true);
@@ -31,8 +39,6 @@ export function BannerManager() {
   const [amount, setAmount] = useState(50);
   const [loadingSubmit, setLoadingSubmit] = useState(false);
   const [actionLoadingId, setActionLoadingId] = useState<string | null>(null);
-
-  const supabase = createClient();
 
   const handleImageFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -53,14 +59,7 @@ export function BannerManager() {
 
   const fetchBanners = async () => {
     try {
-      const { data, error } = await supabase
-        .from('banners')
-        .select('*')
-        .order('created_at', { ascending: false });
-
-      if (!error && data) {
-        setBanners(data);
-      }
+      setBanners(await loadBannerList());
     } catch (err) {
       console.warn('Erreur chargement bannières :', err);
     } finally {
@@ -69,8 +68,20 @@ export function BannerManager() {
   };
 
   useEffect(() => {
-    fetchBanners();
-  }, [supabase]);
+    let isMounted = true;
+    loadBannerList()
+      .then((loadedBanners) => {
+        if (isMounted) setBanners(loadedBanners);
+      })
+      .catch((err) => console.warn('Erreur chargement bannières :', err))
+      .finally(() => {
+        if (isMounted) setLoadingList(false);
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   const handleCreateBannerAndInvoice = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -82,8 +93,10 @@ export function BannerManager() {
 
     setLoadingSubmit(true);
 
-    const { error } = await supabase.from('banners').insert([
-      {
+    const response = await fetch('/api/admin/banners', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
         title,
         image_url: imageUrl,
         target_url: targetUrl || '#',
@@ -91,15 +104,14 @@ export function BannerManager() {
         duration_type: durationType,
         duration_value: durationValue,
         amount_due: amount,
-        payment_status: 'pending',
-        active: false, // Inactif jusqu'à validation de paiement
-      },
-    ]);
+      }),
+    });
+    const result = await response.json();
 
     setLoadingSubmit(false);
 
-    if (error) {
-      alert(`Erreur lors de la création : ${error.message}\n\nNote : Vérifiez que la règle RLS sur la table "banners" autorise l'insertion dans Supabase.`);
+    if (!response.ok) {
+      alert(result.error || 'Erreur lors de la création de la bannière.');
     } else {
       alert(`✅ Bannière et facture enregistrées avec succès pour ${advertiserEmail}.`);
       setTitle('');
@@ -113,17 +125,19 @@ export function BannerManager() {
   const handleToggleActive = async (banner: Banner) => {
     setActionLoadingId(banner.id);
     const newActive = !banner.active;
-    const { error } = await supabase
-      .from('banners')
-      .update({ active: newActive })
-      .eq('id', banner.id);
+    const response = await fetch('/api/admin/banners', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: banner.id, active: newActive }),
+    });
+    const result = await response.json();
 
-    if (!error) {
+    if (response.ok) {
       setBanners((prev) =>
         prev.map((b) => (b.id === banner.id ? { ...b, active: newActive } : b))
       );
     } else {
-      alert(`Erreur : ${error.message}`);
+      alert(result.error || 'Erreur lors de la modification de la bannière.');
     }
     setActionLoadingId(null);
   };
@@ -131,17 +145,19 @@ export function BannerManager() {
   const handleTogglePayment = async (banner: Banner) => {
     setActionLoadingId(banner.id);
     const newStatus = banner.payment_status === 'paid' ? 'pending' : 'paid';
-    const { error } = await supabase
-      .from('banners')
-      .update({ payment_status: newStatus })
-      .eq('id', banner.id);
+    const response = await fetch('/api/admin/banners', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: banner.id, payment_status: newStatus }),
+    });
+    const result = await response.json();
 
-    if (!error) {
+    if (response.ok) {
       setBanners((prev) =>
         prev.map((b) => (b.id === banner.id ? { ...b, payment_status: newStatus } : b))
       );
     } else {
-      alert(`Erreur : ${error.message}`);
+      alert(result.error || 'Erreur lors de la modification du paiement.');
     }
     setActionLoadingId(null);
   };
@@ -150,12 +166,17 @@ export function BannerManager() {
     if (!confirm('Êtes-vous certain de vouloir supprimer cette bannière ?')) return;
 
     setActionLoadingId(id);
-    const { error } = await supabase.from('banners').delete().eq('id', id);
+    const response = await fetch('/api/admin/banners', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id }),
+    });
+    const result = await response.json();
 
-    if (!error) {
+    if (response.ok) {
       setBanners((prev) => prev.filter((b) => b.id !== id));
     } else {
-      alert(`Erreur : ${error.message}`);
+      alert(result.error || 'Erreur lors de la suppression de la bannière.');
     }
     setActionLoadingId(null);
   };
@@ -183,7 +204,7 @@ export function BannerManager() {
             </div>
 
             <div>
-              <label className="block text-xs font-semibold text-slate-300">E-mail de l'annonceur</label>
+              <label className="block text-xs font-semibold text-slate-300">E-mail de l&apos;annonceur</label>
               <input
                 type="email"
                 required
@@ -249,7 +270,7 @@ export function BannerManager() {
               <label className="block text-xs font-semibold text-slate-300">Unité de durée</label>
               <select
                 value={durationType}
-                onChange={(e) => setDurationType(e.target.value as any)}
+                onChange={(e) => setDurationType(e.target.value as 'day' | 'week' | 'month')}
                 className="mt-1 w-full rounded-xl bg-slate-950 border border-slate-800 px-3 py-2.5 text-sm text-slate-100 focus:outline-none focus:border-indigo-500"
               >
                 <option value="day">Jour(s)</option>

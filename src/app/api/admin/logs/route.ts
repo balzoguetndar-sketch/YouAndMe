@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { createClient } from '@supabase/supabase-js';
-import { ADMIN_EMAIL } from '@/src/lib/validation';
+import { ADMIN_SESSION_COOKIE, verifyAdminSessionToken } from '@/src/lib/adminAuth';
 
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://xztfsvhssysmpqywmyul.supabase.co',
@@ -10,11 +10,8 @@ const supabaseAdmin = createClient(
 
 async function verifyAdminAuth() {
   const cookieStore = await cookies();
-  const rawCookie = cookieStore.get('yam_user_email')?.value;
-  const cookieEmail = rawCookie ? decodeURIComponent(rawCookie).toLowerCase().trim() : '';
-  const admin2FA = cookieStore.get('yam_admin_2fa')?.value;
-
-  return cookieEmail === ADMIN_EMAIL.toLowerCase().trim() && admin2FA === 'verified';
+  const adminEmail = await verifyAdminSessionToken(cookieStore.get(ADMIN_SESSION_COOKIE)?.value);
+  return adminEmail !== null;
 }
 
 export async function GET() {
