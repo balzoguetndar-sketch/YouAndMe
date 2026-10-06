@@ -45,24 +45,30 @@ export function LogManager({ initialLogs = [] }: LogManagerProps) {
   };
 
   useEffect(() => {
-    if (initialLogs.length > 0) {
-      return;
-    }
-
     let isMounted = true;
-    loadLogs()
-      .then((loadedLogs) => {
+
+    const refreshLogs = async () => {
+      try {
+        const loadedLogs = await loadLogs();
         if (isMounted) setLogs(loadedLogs);
-      })
-      .catch((error) => console.warn('Erreur chargement logs :', error))
-      .finally(() => {
+      } catch (error) {
+        console.warn('Erreur chargement logs :', error);
+      } finally {
         if (isMounted) setLoading(false);
-      });
+      }
+    };
+
+    void refreshLogs();
+
+    const intervalId = window.setInterval(() => {
+      void refreshLogs();
+    }, 15000);
 
     return () => {
       isMounted = false;
+      window.clearInterval(intervalId);
     };
-  }, [initialLogs.length]);
+  }, []);
 
   const showFeedback = (text: string, type: 'success' | 'error' = 'success') => {
     setFeedbackMsg({ text, type });
@@ -160,6 +166,28 @@ export function LogManager({ initialLogs = [] }: LogManagerProps) {
     }
   };
 
+  const handleDeleteOneLog = async (logId: string) => {
+    if (!confirm('Supprimer ce log de connexion ?')) return;
+
+    try {
+      const res = await fetch('/api/admin/logs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'deleteOne', id: logId }),
+      });
+      const data = await res.json();
+
+      if (!res.ok) {
+        throw new Error(data.error || 'Erreur lors de la suppression');
+      }
+
+      showFeedback('✅ Log supprimé.');
+      window.location.reload();
+    } catch (error: unknown) {
+      showFeedback(`Erreur : ${error instanceof Error ? error.message : 'Erreur inconnue'}`, 'error');
+    }
+  };
+
   // Filtrage des logs
   const filteredLogs = logs.filter((log) => {
     if (!searchTerm) return true;
@@ -186,31 +214,26 @@ export function LogManager({ initialLogs = [] }: LogManagerProps) {
       )}
 
       {/* 1. Panneau d'outils de Purge Administrateur */}
-      <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 sm:p-6 shadow-xl space-y-5">
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 pb-3">
+      <div className="rounded-2xl border border-slate-800 bg-[linear-gradient(180deg,_rgba(15,23,42,0.98),_rgba(15,23,42,0.88))] p-4 shadow-[0_0_0_1px_rgba(148,163,184,0.05)] sm:p-5">
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 pb-3">
           <div>
-            <h3 className="text-sm sm:text-base font-bold text-slate-100 flex items-center gap-2">
-              <span>🧹</span> Outils de Purge & Nettoyage de l&apos;Historique
-            </h3>
-            <p className="text-xs text-slate-400 mt-0.5">
-              Gérez le cycle de rétention des données de connexion (purge 24h ou sélection de période).
-            </p>
+            <p className="text-[10px] uppercase tracking-[0.18em] text-slate-400">Historique</p>
+            <h3 className="mt-1 text-sm font-bold text-slate-100 sm:text-base">Purge & rétention</h3>
           </div>
 
           <button
             type="button"
             onClick={handlePurge24h}
             disabled={purging}
-            className="px-4 py-2 rounded-xl text-xs font-bold text-amber-200 bg-amber-950/70 border border-amber-800 hover:bg-amber-900 transition-all cursor-pointer shadow-md disabled:opacity-50 flex items-center gap-1.5"
+            className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] font-bold text-amber-200 transition-all hover:bg-amber-500/15 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            <span>⏱️</span> Purger les logs de plus de 24h
+            Purger +24h
           </button>
         </div>
 
-        {/* Formulaire de purge par plage de dates */}
-        <form onSubmit={handlePurgeDateRange} className="grid gap-4 sm:grid-cols-3 items-end">
+        <form onSubmit={handlePurgeDateRange} className="grid gap-3 lg:grid-cols-[1fr_1fr_auto] lg:items-end">
           <div>
-            <label className="block text-xs font-semibold text-slate-300 mb-1">
+            <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-400">
               Date de début
             </label>
             <input
@@ -218,12 +241,12 @@ export function LogManager({ initialLogs = [] }: LogManagerProps) {
               required
               value={startDate}
               onChange={(e) => setStartDate(e.target.value)}
-              className="w-full rounded-xl bg-slate-950 border border-slate-800 px-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-indigo-500"
+              className="w-full rounded-xl border border-slate-700 bg-slate-950/80 px-3 py-2 text-xs text-slate-100 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
             />
           </div>
 
           <div>
-            <label className="block text-xs font-semibold text-slate-300 mb-1">
+            <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-400">
               Date de fin
             </label>
             <input
@@ -231,7 +254,7 @@ export function LogManager({ initialLogs = [] }: LogManagerProps) {
               required
               value={endDate}
               onChange={(e) => setEndDate(e.target.value)}
-              className="w-full rounded-xl bg-slate-950 border border-slate-800 px-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-indigo-500"
+              className="w-full rounded-xl border border-slate-700 bg-slate-950/80 px-3 py-2 text-xs text-slate-100 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
             />
           </div>
 
@@ -239,19 +262,19 @@ export function LogManager({ initialLogs = [] }: LogManagerProps) {
             <button
               type="submit"
               disabled={purging || !startDate || !endDate}
-              className="flex-1 py-2 px-3 rounded-xl text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-500 transition-all shadow-md cursor-pointer disabled:opacity-50"
+              className="flex-1 rounded-xl bg-indigo-600 px-3 py-2.5 text-[11px] font-bold text-white transition-all hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-50"
             >
-              {purging ? 'Purge...' : 'Purger la période'}
+              {purging ? 'Purge...' : 'Période'}
             </button>
 
             <button
               type="button"
               onClick={handlePurgeAll}
               disabled={purging || logs.length === 0}
-              className="py-2 px-3 rounded-xl text-xs font-bold text-red-300 bg-red-950/60 border border-red-800 hover:bg-red-900 transition-all cursor-pointer disabled:opacity-50"
+              className="rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2.5 text-[11px] font-bold text-red-200 transition-all hover:bg-red-500/15 disabled:cursor-not-allowed disabled:opacity-50"
               title="Vider tout l'historique"
             >
-              Vider tout
+              Tout
             </button>
           </div>
         </form>
@@ -291,12 +314,13 @@ export function LogManager({ initialLogs = [] }: LogManagerProps) {
                 <th className="px-5 py-3">Utilisateur</th>
                 <th className="px-5 py-3">Adresse IP</th>
                 <th className="px-5 py-3">Date & Heure de connexion</th>
+                <th className="px-5 py-3 text-right">Action</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800 bg-slate-950/40">
               {loading ? (
                 <tr>
-                  <td colSpan={3} className="px-5 py-8 text-center text-slate-500 italic">
+                  <td colSpan={4} className="px-5 py-8 text-center text-slate-500 italic">
                     Chargement des logs...
                   </td>
                 </tr>
@@ -310,12 +334,21 @@ export function LogManager({ initialLogs = [] }: LogManagerProps) {
                       <td className="px-5 py-3 text-xs text-slate-400">
                         {timestamp ? new Date(timestamp).toLocaleString('fr-FR') : 'Date inconnue'}
                       </td>
+                      <td className="px-5 py-3 text-right">
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteOneLog(log.id)}
+                          className="rounded-lg border border-red-500/40 bg-red-500/10 px-2 py-1 text-[10px] font-bold uppercase tracking-[0.12em] text-red-200 transition-all hover:bg-red-500/20"
+                        >
+                          Supprimer
+                        </button>
+                      </td>
                     </tr>
                   );
                 })
               ) : (
                 <tr>
-                  <td colSpan={3} className="px-5 py-8 text-center text-slate-500 italic">
+                  <td colSpan={4} className="px-5 py-8 text-center text-slate-500 italic">
                     {searchTerm ? 'Aucun log ne correspond à votre recherche.' : 'Aucune connexion enregistrée.'}
                   </td>
                 </tr>

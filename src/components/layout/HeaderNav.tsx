@@ -1,10 +1,12 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { createClient } from '@/src/lib/supabase/clients';
 import { ADMIN_EMAIL } from '@/src/lib/validation';
 
 export function HeaderNav() {
+  const router = useRouter();
   const [email, setEmail] = useState<string | null>(null);
   const supabase = createClient();
 
@@ -38,7 +40,7 @@ export function HeaderNav() {
     try {
       await fetch('/api/auth/admin/logout', { method: 'POST' });
       await supabase.auth.signOut();
-    } catch (e) {}
+    } catch {}
     document.cookie = 'yam_user_email=; path=/; max-age=0;';
     document.cookie = 'yam_admin_2fa=; path=/; max-age=0;';
     if (typeof window !== 'undefined') {
@@ -48,7 +50,7 @@ export function HeaderNav() {
       localStorage.removeItem('yam_user_email');
       localStorage.removeItem('yam_admin_2fa');
     }
-    window.location.href = '/login';
+    router.replace('/login');
   };
 
   if (!email) {

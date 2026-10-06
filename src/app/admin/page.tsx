@@ -1,16 +1,14 @@
 import { createClient as createAdminClient } from '@supabase/supabase-js';
+import Link from 'next/link';
 import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { ADMIN_SESSION_COOKIE, verifyAdminSessionToken } from '@/src/lib/adminAuth';
 import { LiveUsersManager } from '@/src/app/admin/LiveUsersManager';
-import { VideoRoom } from '@/src/components/call/VideoRoom';
 import { BannerManager } from '@/src/app/admin/BannerManager';
 import { PricingToggle } from '@/src/app/admin/PricingToggle';
 import { LogManager } from './LogManager';
 import { LicenseManager } from './LicenseManager';
-
 import { LogoutButton } from './LogoutButton';
-import { CallLauncher } from '@/src/components/call/CallLauncher';
 
 // Client administrateur avec typage TypeScript
 const supabaseAdmin = createAdminClient(
@@ -42,7 +40,7 @@ export default async function AdminPage() {
   const totalLogs: number = logs?.length || 0;
   const uniqueUsers: number = new Set(logs?.map((l) => l.email?.toLowerCase().trim())).size;
   const activeBannersCount: number = banners?.filter((b) => b.active).length || 0;
-  const totalRevenue: number =
+  const paidBannersTotal: number =
     banners?.filter((b) => b.payment_status === 'paid').reduce((acc: number, b) => acc + (b.amount_due || 0), 0) || 0;
 
   return (
@@ -63,15 +61,15 @@ export default async function AdminPage() {
           </p>
         </div>
 
-        {/* <div className="flex items-center gap-3">
-          <a
+        <div className="flex items-center gap-3">
+          <Link
             href="/"
             className="px-4 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-200 text-xs font-bold border border-slate-800 transition-all flex items-center gap-1.5 shadow-md"
           >
-            <span>📱</span> Basculer vers l'Espace Utilisateur
-          </a>
+            <span>📱</span> Basculer vers l&apos;Espace Utilisateur
+          </Link>
           <LogoutButton />
-        </div> */}
+        </div>
       </div>
 
       {/* Cartes Métriques KPIs */}
@@ -92,8 +90,8 @@ export default async function AdminPage() {
         </div>
 
         <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-1 shadow-lg">
-          <p className="text-xs text-slate-400 font-medium">Revenus Encaissés</p>
-          <p className="text-2xl font-extrabold text-purple-300">{totalRevenue} €</p>
+          <p className="text-xs text-slate-400 font-medium">Bannières Payées</p>
+          <p className="text-2xl font-extrabold text-purple-300">{paidBannersTotal} €</p>
         </div>
       </div>
 

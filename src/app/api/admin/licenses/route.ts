@@ -31,6 +31,48 @@ export async function POST(request: Request) {
 
   try {
     const body = await request.json();
+
+    if (body?.action === 'reset_quota') {
+      const emailResult = validateEmail(body?.email);
+      if (!emailResult.isValid) {
+        return NextResponse.json({ error: 'Email invalide.' }, { status: 400 });
+      }
+
+      const supabaseAdmin = createClient(supabaseUrl, serviceRoleKey, {
+        auth: { autoRefreshToken: false, persistSession: false },
+      });
+
+      const { data: existingUsage, error: lookupError } = await supabaseAdmin
+        .from('user_usage')
+        .select('usage_count, has_license, license_key, activated_at')
+        .eq('email', emailResult.cleanEmail)
+        .maybeSingle();
+
+      if (lookupError) {
+        console.error('Erreur lecture quota pour débloquage manuel:', lookupError.message);
+        return NextResponse.json({ error: 'Impossible de lire le quota utilisateur dans Supabase.' }, { status: 500 });
+      }
+
+      const { error: resetError } = await supabaseAdmin.from('user_usage').upsert({
+        email: emailResult.cleanEmail,
+        usage_count: 0,
+        has_license: Boolean(existingUsage?.has_license) || Boolean(existingUsage?.license_key),
+        license_key: existingUsage?.license_key || null,
+        activated_at: existingUsage?.activated_at || null,
+      }, { onConflict: 'email' });
+
+      if (resetError) {
+        console.error('Erreur de remise à zéro du quota:', resetError.message);
+        return NextResponse.json({ error: 'Impossible de remettre à zéro le quota.' }, { status: 500 });
+      }
+
+      return NextResponse.json({
+        success: true,
+        email: emailResult.cleanEmail,
+        message: `Quota remis à zéro pour ${emailResult.cleanEmail}. L’utilisateur peut maintenant reprendre normalement.`,
+      });
+    }
+
     const emailResult = validateEmail(body?.email);
     const plan = body?.plan as LicensePlan;
     const paymentReference = typeof body?.paymentReference === 'string'
@@ -58,7 +100,7 @@ export async function POST(request: Request) {
     });
     const { data: existingUsage, error: lookupError } = await supabaseAdmin
       .from('user_usage')
-      .select('usage_count, license_key')
+      .select('usage_count, has_license, license_key')
       .eq('email', emailResult.cleanEmail)
       .maybeSingle();
 
@@ -67,7 +109,16 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Impossible de lire le quota utilisateur dans Supabase.' }, { status: 500 });
     }
 
-    if (existingUsage?.license_key?.includes(paymentReference)) {
+    const hasActiveStoredLicense = Boolean(existingUsage?.has_license) ||
+      (typeof existingUsage?.license_key === 'string' && (
+        existingUsage.license_key.includes(paymentReference) ||
+        existingUsage.license_key.startsWith('stripe-supporter') ||
+        existingUsage.license_key.startsWith('manual-supporter:') ||
+        existingUsage.license_key.startsWith('stripe-annual:') ||
+        existingUsage.license_key.startsWith('manual-annual:')
+      ));
+
+    if (hasActiveStoredLicense && existingUsage?.license_key?.includes(paymentReference)) {
       return NextResponse.json({ error: 'Cette référence de paiement a déjà été activée.' }, { status: 409 });
     }
 

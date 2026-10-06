@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
+import { useRouter } from 'next/navigation';
 import { createClient } from '@/src/lib/supabase/clients';
 import { BannerCarousel } from '@/src/components/banner/BannerCarousel';
 import { ActiveCallRoom } from '@/src/components/call/ActiveCallRoom';
@@ -13,7 +14,7 @@ import {
   SignalData,
 } from '@/src/lib/webrtc';
 import { soundManager } from '@/src/lib/sound';
-import { logUserConnection } from '@/src/lib/logger';
+import { logUserConnection, clearSessionConnectionLog } from '@/src/lib/logger';
 import { PricingPlans } from '@/src/components/subscription/PricingPlans';
 import { getUserUsage, incrementUserUsage, UserUsageInfo } from '@/src/lib/usage';
 import { UsageLimitModal } from '@/src/components/subscription/UsageLimitModal';
@@ -23,6 +24,7 @@ type Ambience = 'neutral' | 'love' | 'family' | 'couple' | 'friendship';
 type CallType = 'video' | 'audio';
 
 export default function HomePage() {
+  const router = useRouter();
   const [currentUserEmail, setCurrentUserEmail] = useState<string | null>(null);
   const [userUsage, setUserUsage] = useState<UserUsageInfo | null>(null);
   const [showUsageModal, setShowUsageModal] = useState(false);
@@ -88,7 +90,7 @@ export default function HomePage() {
           try {
             await supabase.auth.signOut();
           } catch {}
-          window.location.href = '/login';
+          router.replace('/login');
           return;
         }
 
@@ -96,7 +98,7 @@ export default function HomePage() {
       }
 
       if (!email) {
-        window.location.href = '/login';
+        router.replace('/login');
         return;
       }
 
@@ -119,8 +121,8 @@ export default function HomePage() {
         if (usage.isLocked) {
           setShowUsageModal(true);
         }
-      } catch (err) {
-        console.warn('Erreur chargement licence :', err);
+      } catch {
+        console.warn('Erreur chargement licence :');
       }
 
       setLoading(false);
@@ -130,7 +132,7 @@ export default function HomePage() {
     };
 
     initAuth();
-  }, [supabase]);
+  }, [router, supabase]);
 
   // 3. Gestion de la présence en temps réel et signalisation d'appels entrants
   useEffect(() => {
@@ -177,7 +179,7 @@ export default function HomePage() {
     } catch {}
     try {
       await supabase.auth.signOut();
-    } catch (e) {}
+    } catch {}
     document.cookie = 'yam_user_email=; path=/; max-age=0;';
     document.cookie = 'yam_admin_2fa=; path=/; max-age=0;';
     if (typeof window !== 'undefined') {
@@ -186,8 +188,9 @@ export default function HomePage() {
       sessionStorage.removeItem('yam_admin_2fa');
       localStorage.removeItem('yam_user_email');
       localStorage.removeItem('yam_admin_2fa');
+      clearSessionConnectionLog(currentUserEmail ?? undefined);
     }
-    window.location.href = '/login';
+    router.replace('/login');
   };
 
   // Validation email
@@ -299,7 +302,7 @@ export default function HomePage() {
       recorder.start();
       mediaRecorderRef.current = recorder;
       setIsRecording(true);
-    } catch (err) {
+    } catch {
       alert('Impossible d’accéder au micro ou à la caméra pour l’enregistrement.');
     }
   };
@@ -456,7 +459,7 @@ export default function HomePage() {
                 onClick={() => setShowPricing(true)}
                 className="text-[11px] font-bold text-amber-400 hover:text-amber-300 underline cursor-pointer"
               >
-                Débloquer
+                Gérer les tarifs
               </button>
             )}
             <button
@@ -494,7 +497,7 @@ export default function HomePage() {
               Contacter un interlocuteur
             </h2>
             <p className="text-xs text-slate-400">
-              Saisissez l'adresse e-mail de votre correspondant pour vérifier sa présence en temps réel.
+              Saisissez l&apos;adresse e-mail de votre correspondant pour vérifier sa présence en temps réel.
             </p>
           </div>
 
@@ -575,7 +578,7 @@ export default function HomePage() {
                 {/* Choix d'ambiance */}
                 <div className="space-y-2">
                   <label className="block text-xs font-semibold text-slate-300">
-                    Choisir l'ambiance de l'appel
+                    Choisir l&apos;ambiance de l&apos;appel
                   </label>
                   <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
                     {[
@@ -605,7 +608,7 @@ export default function HomePage() {
                   onClick={handleLaunchCall}
                   className="w-full py-4 rounded-2xl bg-emerald-600 hover:bg-emerald-500 font-bold text-sm text-white shadow-xl transition-all cursor-pointer"
                 >
-                  🚀 Lancer l'appel {callType === 'video' ? 'Vidéo' : 'Audio'} ({ambience})
+                  🚀 Lancer l&apos;appel {callType === 'video' ? 'Vidéo' : 'Audio'} ({ambience})
                 </button>
               </div>
 
@@ -641,7 +644,7 @@ export default function HomePage() {
                     🟠 Interlocuteur Hors Ligne — Laisser un message différé
                   </h3>
                   <p className="text-xs text-slate-400">
-                    Votre correspondant n'est pas connecté. Vous pouvez lui laisser un message écrit, audio ou vidéo.
+                    Votre correspondant n&apos;est pas connecté. Vous pouvez lui laisser un message écrit, audio ou vidéo.
                   </p>
                 </div>
 
@@ -656,7 +659,7 @@ export default function HomePage() {
                       key={tab.id}
                       type="button"
                       onClick={() => {
-                        setOfflineMessageType(tab.id as any);
+                        setOfflineMessageType(tab.id as 'text' | 'audio' | 'video');
                         setRecordedMediaUrl(null);
                       }}
                       className={`py-2 px-3 rounded-xl border text-xs font-semibold transition-all ${
@@ -688,7 +691,7 @@ export default function HomePage() {
                         onClick={() => startRecording(offlineMessageType)}
                         className="px-5 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-500 text-white font-bold text-xs transition-all cursor-pointer"
                       >
-                        🔴 Démarrer l'enregistrement {offlineMessageType === 'audio' ? 'Audio' : 'Vidéo'}
+                        🔴 Démarrer l&apos;enregistrement {offlineMessageType === 'audio' ? 'Audio' : 'Vidéo'}
                       </button>
                     )}
 
@@ -701,7 +704,7 @@ export default function HomePage() {
                           onClick={stopRecording}
                           className="px-5 py-2 rounded-xl bg-red-600 hover:bg-red-500 text-white font-bold text-xs cursor-pointer"
                         >
-                          ⏹️ Arrêter l'enregistrement
+                          ⏹️ Arrêter l&apos;enregistrement
                         </button>
                       </div>
                     )}

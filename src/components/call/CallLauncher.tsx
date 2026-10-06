@@ -215,13 +215,13 @@ export function CallLauncher() {
         <div className="space-y-1 text-center">
           <h2 className="text-xl font-bold">Lancer un appel direct Administrateur</h2>
           <p className="text-xs text-slate-400">
-            Appelez n'importe quel utilisateur connecté en direct avec sonnerie & chiffrement WebRTC
+            Appelez n&apos;importe quel utilisateur connecté en direct avec sonnerie & chiffrement WebRTC
           </p>
         </div>
 
         <div className="space-y-2">
           <label htmlFor="peer-email" className="block text-xs font-semibold text-slate-300">
-            E-mail de l'interlocuteur
+            E-mail de l&apos;interlocuteur
           </label>
           <div className="relative">
             <input
@@ -312,7 +312,7 @@ export function CallLauncher() {
                   onClick={handleStartCall}
                   className="w-full py-3.5 px-4 rounded-xl font-bold text-white bg-emerald-600 hover:bg-emerald-500 transition-all shadow-xl cursor-pointer text-sm"
                 >
-                  🚀 Faire sonner & Démarrer l'appel ({ambience})
+                  🚀 Faire sonner &amp; Démarrer l&apos;appel ({ambience})
                 </button>
               </>
             ) : (
@@ -332,7 +332,7 @@ export function CallLauncher() {
                   onClick={handleCancelCall}
                   className="py-2.5 px-6 rounded-xl font-bold text-xs text-white bg-red-600 hover:bg-red-500 transition-all shadow-lg cursor-pointer"
                 >
-                  🔴 Raccrocher / Annuler l'appel
+                  🔴 Raccrocher / Annuler l&apos;appel
                 </button>
               </div>
             )}

@@ -48,6 +48,20 @@ export async function POST(request: Request) {
     const body = await request.json();
     const { action, startDate, endDate } = body;
 
+    if (action === 'deleteOne') {
+      const rawId = body?.id;
+      const parsedId = typeof rawId === 'string' ? Number(rawId.trim()) : Number(rawId);
+
+      if (!Number.isFinite(parsedId)) {
+        return NextResponse.json({ error: 'Identifiant de log invalide.' }, { status: 400 });
+      }
+
+      const { error } = await supabaseAdmin.from('connection_logs').delete().eq('id', parsedId);
+
+      if (error) throw error;
+      return NextResponse.json({ success: true, message: 'Log supprimé avec succès' });
+    }
+
     if (action === 'purge24h') {
       const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
       const { error } = await supabaseAdmin
@@ -80,7 +94,7 @@ export async function POST(request: Request) {
       const { error } = await supabaseAdmin
         .from('connection_logs')
         .delete()
-        .neq('id', '00000000-0000-0000-0000-000000000000');
+        .gt('id', 0);
 
       if (error) throw error;
       return NextResponse.json({ success: true, message: 'Historique complet vidé' });

@@ -1,5 +1,6 @@
 'use client';
 
+import Image from 'next/image';
 import { useEffect, useState } from 'react';
 import { createClient } from '@/src/lib/supabase/clients';
 
@@ -41,7 +42,7 @@ export function BannerCarousel() {
         if (!error && data && data.length > 0) {
           setBanners(data);
         }
-      } catch (err) {
+      } catch {
         // En cas d'erreur réseau, conserve les bannières par défaut
       }
     };
@@ -67,9 +68,11 @@ export function BannerCarousel() {
         rel="noopener noreferrer"
         className="block relative h-36 w-full group"
       >
-        <img
+        <Image
           src={current.image_url}
           alt={current.title}
+          fill
+          unoptimized
           className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
         />
         <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/20 to-transparent p-3 flex items-end justify-between">

@@ -136,7 +136,6 @@ export async function sendSignal(targetEmail: string, signal: SignalData): Promi
 // Gestionnaire Singleton de présence pour partager la même connexion WebSocket entre plusieurs composants
 let sharedPresenceChannel: RealtimeChannel | null = null;
 const presenceListeners = new Set<(onlineUsers: Set<string>) => void>();
-let trackedUserEmail: string | null = null;
 
 /**
  * Suivi de présence en temps réel (En ligne / Hors ligne)
@@ -166,8 +165,6 @@ export function subscribeToPresence(
 
   // Si le canal n'est pas encore créé, on l'initialise
   if (!sharedPresenceChannel) {
-    trackedUserEmail = cleanMyEmail;
-
     // Supprime un canal orphelin préexistant s'il y en a un dans l'instance
     const existingChannels = supabase.getChannels();
     const existing = existingChannels.find((ch) => ch.topic === 'realtime:yam_presence_room');
@@ -229,7 +226,6 @@ export function subscribeToPresence(
         supabase.removeChannel(sharedPresenceChannel);
       } catch {}
       sharedPresenceChannel = null;
-      trackedUserEmail = null;
     }
   };
 }

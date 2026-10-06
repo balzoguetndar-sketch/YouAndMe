@@ -34,6 +34,7 @@ export function ActiveCallRoom({
   const remoteStreamRef = useRef<MediaStream | null>(null);
 
   const [stream, setStream] = useState<MediaStream | null>(null);
+  const [remoteAudioStream, setRemoteAudioStream] = useState<MediaStream | null>(null);
   const [remoteAudioReceived, setRemoteAudioReceived] = useState(false);
   const [remoteVideoReceived, setRemoteVideoReceived] = useState(false);
   const [audioPlaybackBlocked, setAudioPlaybackBlocked] = useState(false);
@@ -111,6 +112,8 @@ export function ActiveCallRoom({
           remoteStream.addTrack(event.track);
         }
       }
+
+      setRemoteAudioStream(remoteStream);
 
       const audioElement = remoteAudioRef.current;
       if (audioElement) {
@@ -341,6 +344,7 @@ export function ActiveCallRoom({
       }
       remoteStream.getTracks().forEach((track) => track.stop());
       remoteStreamRef.current = null;
+      setRemoteAudioStream(null);
       pc.close();
     };
   }, [callerEmail, receiverEmail, isInitiator, callType, ambience, onEndCall]);
@@ -566,7 +570,7 @@ export function ActiveCallRoom({
             {/* Indicateur de réception audio distante */}
             <div className="absolute top-3 right-3">
               <AudioLevelVisualizer
-                stream={remoteStreamRef.current}
+                stream={remoteAudioStream}
                 isMuted={!remoteAudioReceived}
                 label="Audio distant"
                 size="sm"

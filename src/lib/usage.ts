@@ -18,6 +18,35 @@ const MASTER_LICENSE_KEYS = new Set([
   'BALZOG-VIP-ACCESS-2026',
 ]);
 
+const ANNUAL_LICENSE_PREFIXES = ['stripe-annual:', 'manual-annual:'];
+
+function getAnnualExpiry(licenseKey: string | null): number | null {
+  if (!licenseKey) return null;
+
+  const prefix = ANNUAL_LICENSE_PREFIXES.find((candidate) => licenseKey.startsWith(candidate));
+  if (!prefix) return null;
+
+  const expiry = Date.parse(licenseKey.slice(prefix.length).split('|')[0]);
+  return Number.isFinite(expiry) ? expiry : null;
+}
+
+function hasValidStoredLicense(licenseKey: string | null, hasLicenseFlag?: boolean): boolean {
+  if (hasLicenseFlag) return true;
+  if (!licenseKey || typeof licenseKey !== 'string') return false;
+
+  const normalized = licenseKey.trim();
+  if (!normalized) return false;
+
+  if (MASTER_LICENSE_KEYS.has(normalized.toUpperCase())) return true;
+
+  if (normalized === 'stripe-supporter' || normalized.startsWith('manual-supporter:')) {
+    return true;
+  }
+
+  const annualExpiry = getAnnualExpiry(normalized);
+  return annualExpiry !== null && annualExpiry > Date.now();
+}
+
 /**
  * Récupère le statut d'utilisation et de licence pour un e-mail donné
  */
@@ -74,26 +103,15 @@ export async function getUserUsage(email: string): Promise<UserUsageInfo> {
 
     if (!error && data) {
       usageCount = Math.max(usageCount, data.usage_count || 0);
-      const annualPrefix = typeof data.license_key === 'string'
-        ? ['stripe-annual:', 'manual-annual:'].find((prefix) => data.license_key.startsWith(prefix))
-        : undefined;
-      const annualExpiry = annualPrefix
-        ? Date.parse(data.license_key.slice(annualPrefix.length).split('|')[0])
-        : null;
 
-      if (annualExpiry !== null) {
-        hasLicense = Number.isFinite(annualExpiry) && annualExpiry > Date.now();
-        if (typeof window !== 'undefined') {
-          localStorage.setItem(`yam_license_${cleanEmail}`, hasLicense ? 'true' : 'false');
-        }
-      } else if (data.has_license) {
-        hasLicense = true;
-      }
-      // Mise à jour du cache local
+      hasLicense = hasValidStoredLicense(data.license_key || null, Boolean(data.has_license));
+
       if (typeof window !== 'undefined') {
         localStorage.setItem(`yam_usage_${cleanEmail}`, usageCount.toString());
         if (hasLicense) {
           localStorage.setItem(`yam_license_${cleanEmail}`, 'true');
+        } else {
+          localStorage.setItem(`yam_license_${cleanEmail}`, 'false');
         }
       }
     }

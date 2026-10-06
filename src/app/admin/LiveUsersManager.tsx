@@ -10,12 +10,11 @@ import { IncomingCallModal } from '@/src/components/call/IncomingCallModal';
 
 interface LiveUsersManagerProps {
   adminEmail?: string;
-  onSelectUserForCall?: (email: string) => void;
 }
 
-export function LiveUsersManager({ adminEmail, onSelectUserForCall }: LiveUsersManagerProps) {
+export function LiveUsersManager({ adminEmail }: LiveUsersManagerProps) {
   const [onlineUsers, setOnlineUsers] = useState<Set<string>>(new Set());
-  const [myEmail, setMyEmail] = useState(adminEmail || '');
+  const [myEmail, setMyEmail] = useState(() => adminEmail?.toLowerCase().trim() ?? '');
   const [copiedEmail, setCopiedEmail] = useState<string | null>(null);
   const [searchFilter, setSearchFilter] = useState('');
 
@@ -33,7 +32,6 @@ export function LiveUsersManager({ adminEmail, onSelectUserForCall }: LiveUsersM
 
   useEffect(() => {
     if (adminEmail) {
-      setMyEmail(adminEmail.toLowerCase().trim());
       return;
     }
 
@@ -58,7 +56,7 @@ export function LiveUsersManager({ adminEmail, onSelectUserForCall }: LiveUsersM
       }
     }
 
-    fetchUser();
+    void fetchUser();
   }, [adminEmail, supabase]);
 
   // Suivi de présence et écoute des signaux d'appel
@@ -262,7 +260,7 @@ export function LiveUsersManager({ adminEmail, onSelectUserForCall }: LiveUsersM
             {searchFilter ? 'Aucun utilisateur connecté ne correspond à ce filtre.' : 'En attente d’utilisateurs en ligne'}
           </p>
           <p className="text-xs text-slate-500 max-w-md mx-auto">
-            Dès qu'un visiteur ou utilisateur ouvre l'application You&Me, son adresse e-mail apparaîtra ici instantanément.
+            Dès qu&apos;un visiteur ou utilisateur ouvre l&apos;application You&Me, son adresse e-mail apparaîtra ici instantanément.
           </p>
         </div>
       ) : (

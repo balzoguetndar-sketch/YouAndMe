@@ -1,5 +1,6 @@
 'use client';
 
+import Image from 'next/image';
 import { useState, useEffect } from 'react';
 
 type Banner = {
@@ -156,6 +157,7 @@ export function BannerManager() {
       setBanners((prev) =>
         prev.map((b) => (b.id === banner.id ? { ...b, payment_status: newStatus } : b))
       );
+      window.location.reload();
     } else {
       alert(result.error || 'Erreur lors de la modification du paiement.');
     }
@@ -245,8 +247,8 @@ export function BannerManager() {
 
               {imageUrl && (
                 <div className="relative h-20 w-full rounded-xl overflow-hidden border border-slate-800 bg-slate-950">
-                  <img src={imageUrl} alt="Aperçu" className="w-full h-full object-cover" />
-                  <span className="absolute bottom-1 right-1 px-2 py-0.5 rounded text-[10px] bg-slate-900/90 text-slate-300 border border-slate-700">
+                  <Image src={imageUrl} alt="Aperçu" fill unoptimized className="object-cover" />
+                  <span className="absolute bottom-1 right-1 px-2 py-0.5 rounded text-[10px] bg-slate-900/90 text-slate-300 border border-slate-700 z-10">
                     Aperçu
                   </span>
                 </div>
@@ -337,10 +339,12 @@ export function BannerManager() {
               >
                 <div className="space-y-2">
                   <div className="relative h-28 w-full rounded-xl overflow-hidden bg-slate-900 border border-slate-800">
-                    <img
+                    <Image
                       src={banner.image_url}
                       alt={banner.title}
-                      className="w-full h-full object-cover"
+                      fill
+                      unoptimized
+                      className="object-cover"
                     />
                     <span
                       className={`absolute top-2 right-2 px-2 py-0.5 rounded-full text-[10px] font-bold border ${

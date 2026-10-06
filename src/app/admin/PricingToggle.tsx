@@ -4,19 +4,18 @@ import { useState, useEffect } from 'react';
 import { createClient } from '@/src/lib/supabase/clients';
 
 export function PricingToggle() {
-  const [showPricing, setShowPricing] = useState(true);
+  const [showPricing, setShowPricing] = useState<boolean>(() => {
+    if (typeof window === 'undefined') {
+      return true;
+    }
+
+    const saved = localStorage.getItem('yam_show_pricing_in_room');
+    return saved === null ? true : saved === 'true';
+  });
   const [loading, setLoading] = useState(false);
   const supabase = createClient();
 
   useEffect(() => {
-    // 1. Lire la valeur sauvegardée localement ou par défaut
-    if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem('yam_show_pricing_in_room');
-      if (saved !== null) {
-        setShowPricing(saved === 'true');
-      }
-    }
-
     // 2. Écouter les changements en temps réel via le canal Supabase
     const channel = supabase.channel('yam_admin_settings');
     channel
@@ -66,7 +65,7 @@ export function PricingToggle() {
       <div className="space-y-1">
         <div className="flex items-center gap-2">
           <h4 className="text-sm sm:text-base font-bold text-slate-100">
-            Affichage de la Grille Tarifaire en salle d'appel
+            Affichage de la Grille Tarifaire en salle d&apos;appel
           </h4>
           <span
             className={`px-2.5 py-0.5 rounded-full text-[11px] font-bold border ${
@@ -79,7 +78,7 @@ export function PricingToggle() {
           </span>
         </div>
         <p className="text-xs text-slate-400">
-          Contrôle la visibilité de l'onglet et des plans d'abonnement pour les participants lors des appels.
+          Contrôle la visibilité de l&apos;onglet et des plans d&apos;abonnement pour les participants lors des appels.
         </p>
       </div>
 

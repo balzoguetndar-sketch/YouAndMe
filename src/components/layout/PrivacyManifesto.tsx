@@ -20,7 +20,7 @@ export function PrivacyManifesto() {
           <div className="text-lg">🌍</div>
           <h4 className="font-bold text-slate-200">Connexion Mondiale Directe</h4>
           <p className="text-slate-400 leading-relaxed">
-            Où que vous soyez (Dakar, New Delhi, Paris...), si votre interlocuteur est en ligne, l'appel audio/vidéo démarre instantanément.
+            Où que vous soyez (Dakar, New Delhi, Paris...), si votre interlocuteur est en ligne, l&apos;appel audio/vidéo démarre instantanément.
           </p>
         </div>
 

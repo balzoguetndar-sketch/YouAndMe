@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/src/lib/supabase/clients';
-import { logUserConnection } from '@/src/lib/logger';
+import { logUserConnection, clearSessionConnectionLog } from '@/src/lib/logger';
 import { BannerCarousel } from '@/src/components/banner/BannerCarousel';
 import { PrivacyManifesto } from '@/src/components/layout/PrivacyManifesto';
 import { validateEmail, ADMIN_EMAIL } from '@/src/lib/validation';
@@ -83,6 +83,7 @@ export default function LoginPage() {
       localStorage.removeItem('yam_user_email');
       sessionStorage.setItem('yam_user_email', cleanEmail);
       sessionStorage.setItem('yam_session_active', 'true');
+      clearSessionConnectionLog(cleanEmail);
 
       supabase.auth
         .signInAnonymously({
@@ -141,6 +142,7 @@ export default function LoginPage() {
       localStorage.removeItem('yam_user_email');
       sessionStorage.setItem('yam_user_email', cleanEmail);
       sessionStorage.setItem('yam_session_active', 'true');
+      clearSessionConnectionLog(cleanEmail);
 
       supabase.auth
         .signInAnonymously({

@@ -1,8 +1,10 @@
 'use client';
 
+import { useRouter } from 'next/navigation';
 import { createClient } from '@/src/lib/supabase/clients';
 
 export function LogoutButton() {
+  const router = useRouter();
   const supabase = createClient();
 
   const handleLogout = async () => {
@@ -12,8 +14,7 @@ export function LogoutButton() {
     document.cookie = 'yam_admin_2fa=; path=/; max-age=0;';
     localStorage.clear();
     sessionStorage.clear();
-    // Rechargement forcé vers la page de login pour nettoyer les états en mémoire
-    window.location.href = '/login';
+    router.replace('/login');
   };
 
   return (

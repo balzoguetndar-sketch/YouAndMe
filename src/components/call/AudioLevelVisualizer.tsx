@@ -22,16 +22,18 @@ export function AudioLevelVisualizer({
 
   useEffect(() => {
     if (!stream || isMuted) {
-      setAudioLevel(0);
-      setIsSpeaking(false);
-      return;
+      return () => {
+        setAudioLevel(0);
+        setIsSpeaking(false);
+      };
     }
 
     const audioTracks = stream.getAudioTracks();
     if (audioTracks.length === 0 || !audioTracks[0].enabled) {
-      setAudioLevel(0);
-      setIsSpeaking(false);
-      return;
+      return () => {
+        setAudioLevel(0);
+        setIsSpeaking(false);
+      };
     }
 
     let isCancelled = false;
