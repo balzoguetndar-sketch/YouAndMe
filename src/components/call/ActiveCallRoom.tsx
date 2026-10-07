@@ -8,6 +8,7 @@ import { PricingPlans } from '@/src/components/subscription/PricingPlans';
 import { Whiteboard } from '@/src/components/collaboration/Whiteboard';
 import { FileShare } from '@/src/components/collaboration/FileShare';
 import { AudioLevelVisualizer } from '@/src/components/call/AudioLevelVisualizer';
+import { isMediaPermissionError } from '@/src/lib/mediaPermissions';
 
 type ActiveCallRoomProps = {
   callerEmail: string;
@@ -197,6 +198,11 @@ export function ActiveCallRoom({
               video: callType === 'video' ? videoConstraints : false,
             });
           } catch (e1) {
+            if (isMediaPermissionError(e1)) {
+              setMediaWarning('L’accès au microphone ou à la caméra a été refusé. Autorisez-les dans le navigateur avant de relancer l’appel.');
+              return;
+            }
+
             console.warn('Tentative haute résolution échouée, tentative standard avec DSP...', e1);
             try {
               // Tentative 2 : Standard avec DSP audio
@@ -205,6 +211,11 @@ export function ActiveCallRoom({
                 video: callType === 'video',
               });
             } catch (e2) {
+              if (isMediaPermissionError(e2)) {
+                setMediaWarning('L’accès au microphone ou à la caméra a été refusé. Autorisez-les dans le navigateur avant de relancer l’appel.');
+                return;
+              }
+
               console.warn('Tentative vidéo standard échouée, tentative audio seul...', e2);
               try {
                 // Tentative 3 : Audio seul
@@ -215,6 +226,11 @@ export function ActiveCallRoom({
                   setMediaWarning('Caméra indisponible ou occupée : l’appel continue en audio haute qualité.');
                 }
               } catch (e3) {
+                if (isMediaPermissionError(e3)) {
+                  setMediaWarning('L’accès au microphone ou à la caméra a été refusé. Autorisez-les dans le navigateur avant de relancer l’appel.');
+                  return;
+                }
+
                 console.error('Périphériques audio/vidéo inaccessibles :', e3);
                 setMediaWarning('Microphone ou caméra inaccessibles. Veuillez vérifier les autorisations dans votre navigateur ou application.');
               }

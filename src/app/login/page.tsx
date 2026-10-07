@@ -11,7 +11,7 @@ import { validateEmail, ADMIN_EMAIL } from '@/src/lib/validation';
 export default function LoginPage() {
   const [email, setEmail] = useState('');
   const [code, setCode] = useState('');
-  const [step, setStep] = useState<'email' | 'admin_code'>('email');
+  const [step, setStep] = useState<'email' | 'email_otp' | 'admin_code'>('email');
   const [error, setError] = useState<string | null>(null);
   const [infoMessage, setInfoMessage] = useState<string | null>(null);
   const [suggestedEmail, setSuggestedEmail] = useState<string | null>(null);
@@ -79,26 +79,92 @@ export default function LoginPage() {
         return;
       }
 
-      document.cookie = `yam_user_email=${encodeURIComponent(cleanEmail)}; path=/; SameSite=Lax`;
-      localStorage.removeItem('yam_user_email');
-      sessionStorage.setItem('yam_user_email', cleanEmail);
-      sessionStorage.setItem('yam_session_active', 'true');
-      clearSessionConnectionLog(cleanEmail);
+      const { error: otpError } = await supabase.auth.signInWithOtp({
+        email: cleanEmail,
+        options: { shouldCreateUser: true },
+      });
 
-      supabase.auth
-        .signInAnonymously({
-          options: {
-            data: { email: cleanEmail },
-          },
-        })
-        .catch(() => {});
+      if (otpError) {
+        setLoading(false);
+        setError('Impossible d’envoyer le code de connexion. Vérifiez la configuration e-mail de Supabase puis réessayez.');
+        return;
+      }
 
-      await logUserConnection(cleanEmail);
-      router.push('/');
+      setLoading(false);
+      setStep('email_otp');
+      setInfoMessage(`Un code de connexion à 8 chiffres a été envoyé à ${cleanEmail}. Saisissez-le ici pour vérifier cette adresse.`);
     } catch (err: unknown) {
       setLoading(false);
       const message = err instanceof Error ? err.message : 'Vérifiez votre connexion internet.';
       setError(`Erreur de connexion : ${message}`);
+    }
+  };
+
+  const handleEmailOtpSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    setError(null);
+
+    const cleanEmail = email.trim().toLowerCase();
+    const cleanCode = code.replace(/\s/g, '');
+    if (!/^\d{8}$/.test(cleanCode)) {
+      setError('Saisissez le code à 8 chiffres reçu par e-mail.');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const { error: verifyError } = await supabase.auth.verifyOtp({
+        email: cleanEmail,
+        token: cleanCode,
+        type: 'email',
+      });
+
+      if (verifyError) {
+        setError('Code invalide ou expiré. Demandez un nouveau code puis réessayez.');
+        return;
+      }
+
+      const sessionResponse = await fetch('/api/auth/session', {
+        method: 'POST',
+        cache: 'no-store',
+      });
+      const sessionData = await sessionResponse.json() as { email?: string; error?: string };
+      if (!sessionResponse.ok || sessionData.email !== cleanEmail) {
+        setError(sessionData.error || 'Impossible de confirmer la session sur le serveur.');
+        return;
+      }
+
+      sessionStorage.setItem('yam_user_email', cleanEmail);
+      sessionStorage.setItem('yam_session_active', 'true');
+      localStorage.removeItem('yam_user_email');
+      clearSessionConnectionLog(cleanEmail);
+      await logUserConnection(cleanEmail);
+      router.replace('/');
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Vérifiez votre connexion internet.';
+      setError(`Erreur de vérification : ${message}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleResendEmailOtp = async () => {
+    setError(null);
+    setLoading(true);
+    try {
+      const { error: resendError } = await supabase.auth.signInWithOtp({
+        email: email.trim().toLowerCase(),
+        options: { shouldCreateUser: true },
+      });
+      if (resendError) {
+        setError('Impossible de renvoyer le code. Réessayez dans quelques instants.');
+        return;
+      }
+      setInfoMessage(`Un nouveau code a été envoyé à ${email.trim().toLowerCase()}.`);
+    } catch {
+      setError('Impossible de contacter le service e-mail.');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -174,7 +240,9 @@ export default function LoginPage() {
           <p className="text-xs sm:text-sm text-slate-400">
             {step === 'admin_code'
               ? 'Accès sécurisé à votre espace'
-              : 'Accès direct & sécurisé à votre espace de communication'}
+              : step === 'email_otp'
+                ? 'Vérification de votre adresse e-mail'
+                : 'Accès direct & sécurisé à votre espace de communication'}
           </p>
         </div>
 
@@ -244,6 +312,65 @@ export default function LoginPage() {
             >
               {loading ? 'Vérification...' : 'Continuer vers You&Me'}
             </button>
+          </form>
+        )}
+
+        {step === 'email_otp' && (
+          <form onSubmit={handleEmailOtpSubmit} className="space-y-5" noValidate>
+            <div className="rounded-xl border border-slate-800 bg-slate-950 p-3 text-xs text-slate-300">
+              Code envoyé à <strong className="text-white">{email}</strong>
+            </div>
+            <div>
+              <label htmlFor="email-otp" className="mb-1.5 block text-xs sm:text-sm font-medium text-slate-200">
+                Code de vérification
+              </label>
+              <input
+                id="email-otp"
+                type="text"
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                pattern="[0-9]{8}"
+                maxLength={8}
+                autoFocus
+                required
+                value={code}
+                onChange={(event) => {
+                  setCode(event.target.value.replace(/\D/g, '').slice(0, 8));
+                  if (error) setError(null);
+                }}
+                className="block w-full rounded-xl bg-slate-950 border border-slate-800 px-4 py-3 text-center font-mono text-xl tracking-[0.3em] text-slate-100 placeholder-slate-600 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                placeholder="000000"
+              />
+            </div>
+            <button
+              type="submit"
+              disabled={loading || code.length !== 8}
+              className="w-full rounded-xl bg-indigo-600 px-4 py-3.5 text-sm font-bold text-white shadow-lg transition-all hover:bg-indigo-500 disabled:opacity-50"
+            >
+              {loading ? 'Vérification…' : 'Vérifier et continuer'}
+            </button>
+            <div className="flex items-center justify-between gap-3">
+              <button
+                type="button"
+                onClick={() => {
+                  setStep('email');
+                  setCode('');
+                  setError(null);
+                  setInfoMessage(null);
+                }}
+                className="text-xs text-slate-400 hover:text-slate-200"
+              >
+                Changer d’adresse
+              </button>
+              <button
+                type="button"
+                onClick={handleResendEmailOtp}
+                disabled={loading}
+                className="text-xs font-semibold text-indigo-300 hover:text-indigo-200 disabled:opacity-50"
+              >
+                Renvoyer le code
+              </button>
+            </div>
           </form>
         )}
 

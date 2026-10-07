@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import Stripe from 'stripe';
 import { createClient } from '@supabase/supabase-js';
+import { createStoredLicense, type PaidLicenseTier } from '@/src/lib/license';
 import { validateEmail } from '@/src/lib/validation';
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
@@ -54,15 +55,20 @@ export async function POST(request: Request) {
                 return NextResponse.json({ error: 'License activation failed' }, { status: 500 });
             }
 
-            const isSupporter = planId === 'supporter';
-            const expiresAt = new Date();
-            expiresAt.setFullYear(expiresAt.getFullYear() + 1);
-            const licenseKey = isSupporter ? 'stripe-supporter' : `stripe-annual:${expiresAt.toISOString()}`;
+            const tier = planId as PaidLicenseTier;
+            const storedLicense = createStoredLicense(tier);
             const { error: licenseError } = await supabaseAdmin.from('user_usage').upsert({
                 email: cleanEmail,
                 usage_count: existingUsage?.usage_count || 0,
                 has_license: true,
-                license_key: licenseKey,
+                license_key: tier === 'supporter'
+                    ? 'stripe-supporter'
+                    : `stripe-annual:${storedLicense.licensed_until}`,
+                license_tier: storedLicense.license_tier,
+                license_status: storedLicense.license_status,
+                licensed_until: storedLicense.licensed_until,
+                quota_unlimited: storedLicense.quota_unlimited,
+                advertising_enabled: storedLicense.advertising_enabled,
                 activated_at: new Date().toISOString(),
             }, { onConflict: 'email' });
 

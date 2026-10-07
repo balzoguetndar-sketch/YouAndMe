@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useCallback } from 'react';
+import { isMediaPermissionError } from '@/src/lib/mediaPermissions';
 
 export const OPTIMIZED_AUDIO_CONSTRAINTS: MediaTrackConstraints = {
   echoCancellation: true,
@@ -31,6 +32,7 @@ export function useMediaStream() {
         throw new Error('L’accès aux caméras/micros requiert une connexion sécurisée HTTPS (ou localhost).');
       }
 
+
       let mediaStream: MediaStream | null = null;
 
       // Tentative 1 : Contraintes optimisées HD + Audio DSP anti-écho
@@ -40,6 +42,10 @@ export function useMediaStream() {
           video: video ? OPTIMIZED_VIDEO_CONSTRAINTS : false,
         });
       } catch (hdErr) {
+        if (isMediaPermissionError(hdErr)) {
+          throw hdErr;
+        }
+
         console.warn('Tentative flux HD échouée, basculement en mode standard...', hdErr);
         // Tentative 2 : Standard avec audio DSP basique
         try {
@@ -48,6 +54,10 @@ export function useMediaStream() {
             video: video,
           });
         } catch (stdErr) {
+          if (isMediaPermissionError(stdErr)) {
+            throw stdErr;
+          }
+
           console.warn('Tentative standard échouée, tentative audio seul...', stdErr);
           if (audio) {
             mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -66,7 +76,7 @@ export function useMediaStream() {
     } catch (err: unknown) {
       setLoading(false);
       if (err instanceof Error) {
-        if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+        if (isMediaPermissionError(err)) {
           setError('Accès au microphone ou à la caméra refusé. Veuillez autoriser l’accès dans les paramètres du navigateur ou de l’application.');
         } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
           setError('Aucun périphérique vidéo ou audio détecté sur cet appareil.');
@@ -114,4 +124,4 @@ export function useMediaStream() {
     toggleAudio,
     toggleVideo,
   };
-}
+}

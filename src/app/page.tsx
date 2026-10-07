@@ -27,6 +27,7 @@ export default function HomePage() {
   const router = useRouter();
   const [currentUserEmail, setCurrentUserEmail] = useState<string | null>(null);
   const [userUsage, setUserUsage] = useState<UserUsageInfo | null>(null);
+  const [usageError, setUsageError] = useState<string | null>(null);
   const [showUsageModal, setShowUsageModal] = useState(false);
   const [isAdminUser, setIsAdminUser] = useState(false);
   const [targetEmail, setTargetEmail] = useState('');
@@ -118,11 +119,13 @@ export default function HomePage() {
       try {
         const usage = await getUserUsage(formattedEmail);
         setUserUsage(usage);
+        setUsageError(null);
         if (usage.isLocked) {
           setShowUsageModal(true);
         }
-      } catch {
-        console.warn('Erreur chargement licence :');
+      } catch (error) {
+        setUserUsage(null);
+        setUsageError(error instanceof Error ? error.message : 'Impossible de vérifier votre quota sur le serveur.');
       }
 
       setLoading(false);
@@ -202,60 +205,61 @@ export default function HomePage() {
   const handleLaunchCall = async () => {
     if (!isValidTargetEmail || !currentUserEmail) return;
 
-    // 1. Vérification de la limite de 10 utilisations gratuites
-    if (userUsage?.isLocked) {
-      setShowUsageModal(true);
-      return;
+    setUsageError(null);
+    try {
+      const result = await incrementUserUsage(currentUserEmail);
+      setUserUsage(result.usage);
+      if (!result.allowed) {
+        setShowUsageModal(true);
+        return;
+      }
+
+      soundManager.startOutgoingRingtone();
+      setIsInitiator(true);
+      setIsInCall(true);
+
+      await sendSignal(cleanTargetEmail, {
+        type: 'call-request',
+        sender: currentUserEmail,
+        target: cleanTargetEmail,
+        callType,
+        ambience,
+      });
+    } catch (error) {
+      setUsageError(error instanceof Error ? error.message : 'Impossible de vérifier votre quota sur le serveur.');
     }
-
-    // Déclenche la tonalité d'attente sortante pour l'appelant
-    soundManager.startOutgoingRingtone();
-
-    setIsInitiator(true);
-    setIsInCall(true);
-
-    // Incrémentation du compteur d'utilisation
-    incrementUserUsage(currentUserEmail)
-      .then((updated) => setUserUsage(updated))
-      .catch(() => {});
-
-    // Envoi du signal d'appel
-    await sendSignal(cleanTargetEmail, {
-      type: 'call-request',
-      sender: currentUserEmail,
-      target: cleanTargetEmail,
-      callType,
-      ambience,
-    });
   };
 
   // Accepter un appel entrant (avec vérification de quota)
   const handleAcceptIncomingCall = async () => {
     if (!incomingCall || !currentUserEmail) return;
 
-    if (userUsage?.isLocked) {
-      setShowUsageModal(true);
-      return;
+    setUsageError(null);
+    try {
+      const result = await incrementUserUsage(currentUserEmail);
+      setUserUsage(result.usage);
+      if (!result.allowed) {
+        setShowUsageModal(true);
+        return;
+      }
+
+      soundManager.stop();
+      setTargetEmail(incomingCall.callerEmail);
+      setCallType(incomingCall.callType);
+      setAmbience(incomingCall.ambience as Ambience);
+      setIsInitiator(false);
+      setIsInCall(true);
+
+      await sendSignal(incomingCall.callerEmail, {
+        type: 'call-accepted',
+        sender: currentUserEmail,
+        target: incomingCall.callerEmail,
+      });
+
+      setIncomingCall(null);
+    } catch (error) {
+      setUsageError(error instanceof Error ? error.message : 'Impossible de vérifier votre quota sur le serveur.');
     }
-
-    soundManager.stop();
-    setTargetEmail(incomingCall.callerEmail);
-    setCallType(incomingCall.callType);
-    setAmbience(incomingCall.ambience as Ambience);
-    setIsInitiator(false);
-    setIsInCall(true);
-
-    incrementUserUsage(currentUserEmail)
-      .then((updated) => setUserUsage(updated))
-      .catch(() => {});
-
-    await sendSignal(incomingCall.callerEmail, {
-      type: 'call-accepted',
-      sender: currentUserEmail,
-      target: incomingCall.callerEmail,
-    });
-
-    setIncomingCall(null);
   };
 
   // Refuser un appel entrant
@@ -440,9 +444,17 @@ export default function HomePage() {
 
           {/* Compteur d'utilisations (Objectif 6) */}
           <div className="flex items-center gap-2 sm:gap-3">
-            {userUsage?.hasLicense ? (
+            {usageError ? (
+              <span role="alert" className="text-xs font-semibold text-red-300">
+                Quota indisponible : {usageError}
+              </span>
+            ) : userUsage?.hasLicense ? (
               <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-amber-950/80 border border-amber-500/60 text-amber-300 shadow">
                 ⭐ Licence à Vie Active
+              </span>
+            ) : !userUsage ? (
+              <span role="status" className="text-xs font-semibold text-slate-400">
+                Vérification du quota serveur…
               </span>
             ) : (
               <div className="flex items-center gap-2 bg-slate-950/80 border border-slate-800 px-3 py-1.5 rounded-xl">
