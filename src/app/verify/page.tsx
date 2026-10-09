@@ -19,34 +19,32 @@ export default function VerifyMagicLinkPage() {
 
     const searchParams = new URLSearchParams(window.location.search);
     const hashParams = new URLSearchParams(window.location.hash.slice(1));
+
     const code = searchParams.get('code');
     const tokenHash = searchParams.get('token_hash') ?? searchParams.get('token');
     const accessToken = hashParams.get('access_token');
     const refreshToken = hashParams.get('refresh_token');
 
-    // Récupération de la route de destination (par défaut /call-room)
-    const nextUrl = searchParams.get('next') || '/';
+    // Récupération de la route de destination (par défaut la racine /)
+    const targetUrl = searchParams.get('next') || '/';
+
     const verify = async () => {
       try {
         await Promise.resolve();
+
+        // 1. Validation du jeton Supabase
         if (code) {
           const { error } = await supabase.auth.exchangeCodeForSession(code);
-          if (error) {
-            throw new Error(error.message);
-          }
+          if (error) throw new Error(error.message);
         } else if (tokenHash) {
           const { error } = await supabase.auth.verifyOtp({ token_hash: tokenHash, type: 'magiclink' });
-          if (error) {
-            throw new Error(error.message);
-          }
+          if (error) throw new Error(error.message);
         } else if (accessToken && refreshToken) {
           const { error } = await supabase.auth.setSession({
             access_token: accessToken,
             refresh_token: refreshToken,
           });
-          if (error) {
-            throw new Error(error.message);
-          }
+          if (error) throw new Error(error.message);
         } else {
           const { data, error } = await supabase.auth.getSession();
           if (error || !data.session) {
@@ -54,28 +52,31 @@ export default function VerifyMagicLinkPage() {
           }
         }
 
-        window.history.replaceState(null, '', window.location.pathname);
-
+        // 2. Activer la session côté serveur
         const sessionResponse = await fetch('/api/auth/session', {
           method: 'POST',
           cache: 'no-store',
           headers: { 'x-yam-session-action': 'activate' },
         });
+
         const sessionData = await sessionResponse.json() as { email?: string; error?: string };
         if (!sessionResponse.ok || !sessionData.email) {
           throw new Error(sessionData.error || 'La session n’a pas pu être créée.');
         }
 
+        // 3. Sauvegarde locale de la session utilisateur
         sessionStorage.setItem('yam_user_email', sessionData.email);
         sessionStorage.setItem('yam_session_active', 'true');
         localStorage.setItem('yam_user_email', sessionData.email);
+
         clearSessionConnectionLog(sessionData.email);
         await logUserConnection(sessionData.email);
-        setStatus('success');
-        setMessage('Connexion validée. Ouverture de votre espace…');
 
-        // Redirection directe vers la salle des appels
-        router.replace(nextUrl);
+        setStatus('success');
+        setMessage('Connexion validée. Entrée dans la salle d’appel…');
+
+        // 4. Redirection directe et ferme vers la salle d'appel
+        window.location.href = targetUrl;
       } catch (error) {
         setStatus('error');
         setMessage(error instanceof Error ? error.message : 'Le lien est invalide ou expiré.');

@@ -71,6 +71,7 @@ export async function POST(request: Request) {
     const redirectOrigin = process.env.NODE_ENV === 'development'
       ? process.env.LOCAL_APP_URL || requestOrigin
       : requestOrigin;
+
     const redirectTo = new URL('/verify?next=/', redirectOrigin).toString();
     const { data, error } = await adminSupabase.auth.admin.generateLink({
       email: validatedEmail,
