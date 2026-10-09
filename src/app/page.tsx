@@ -14,11 +14,12 @@ import {
   SignalData,
 } from '@/src/lib/webrtc';
 import { soundManager } from '@/src/lib/sound';
-import { logUserConnection, clearSessionConnectionLog } from '@/src/lib/logger';
+import { logUserConnection } from '@/src/lib/logger';
 import { PricingPlans } from '@/src/components/subscription/PricingPlans';
 import { getUserUsage, incrementUserUsage, UserUsageInfo } from '@/src/lib/usage';
 import { UsageLimitModal } from '@/src/components/subscription/UsageLimitModal';
 import { ContactList } from '@/src/components/contact/ContactList';
+import { useHeaderActions } from '@/src/components/layout/HeaderActionsContext';
 import { ADMIN_EMAIL } from '@/src/lib/validation';
 
 type Ambience = 'neutral' | 'love' | 'family' | 'couple' | 'friendship';
@@ -36,6 +37,7 @@ export default function HomePage() {
   const [onlineUsers, setOnlineUsers] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const [showPricing, setShowPricing] = useState(false);
+  const { setHeaderActions } = useHeaderActions();
 
   // État de l'appel
   const [isInCall, setIsInCall] = useState(false);
@@ -184,6 +186,56 @@ export default function HomePage() {
     return () => window.clearInterval(interval);
   }, [currentUserEmail, isAdminUser, router, supabase]);
 
+  useEffect(() => {
+    if (!currentUserEmail) {
+      setHeaderActions(null);
+      return;
+    }
+
+    setHeaderActions(
+      <div className="flex flex-wrap items-center gap-2">
+        {usageError ? (
+          <span role="alert" className="text-xs font-semibold text-red-300">
+            Quota indisponible : {usageError}
+          </span>
+        ) : userUsage?.hasLicense ? (
+          <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-500/60 bg-amber-950/80 px-3 py-1 text-xs font-bold text-amber-300 shadow">
+            ⭐ Licence à Vie Active
+          </span>
+        ) : !userUsage ? (
+          <span role="status" className="text-xs font-semibold text-slate-400">
+            Vérification du quota serveur…
+          </span>
+        ) : (
+          <div className="flex items-center gap-2 rounded-xl border border-slate-800 bg-slate-950/80 px-2 py-1.5 sm:px-3">
+            <span className="text-xs font-semibold text-slate-300">
+              🎯 <strong className={userUsage.remaining <= 2 ? 'text-red-400' : 'text-indigo-400'}>
+                {userUsage.remaining} / 10
+              </strong> gratuits restants
+            </span>
+          </div>
+        )}
+
+        {isAdminUser && (
+          <button
+            onClick={() => setShowPricing(true)}
+            className="text-[11px] font-bold text-amber-400 underline hover:text-amber-300"
+          >
+            Gérer les tarifs
+          </button>
+        )}
+        <button
+          onClick={() => setShowLocalTest((visible) => !visible)}
+          className="rounded-xl border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs font-semibold text-slate-200 transition-all hover:bg-slate-700"
+        >
+          {showLocalTest ? '✕ Masquer' : '🎥 Test'}
+        </button>
+      </div>
+    );
+  }, [currentUserEmail, isAdminUser, setHeaderActions, showLocalTest, usageError, userUsage]);
+
+  useEffect(() => () => setHeaderActions(null), [setHeaderActions]);
+
   // 3. Gestion de la présence en temps réel et signalisation d'appels entrants
   useEffect(() => {
     if (!currentUserEmail) return;
@@ -221,31 +273,6 @@ export default function HomePage() {
       soundManager.stop();
     };
   }, [currentUserEmail, targetEmail]);
-
-  const handleLogout = async () => {
-    soundManager.stop();
-    const isAdmin = currentUserEmail?.toLowerCase() === ADMIN_EMAIL.toLowerCase();
-    try {
-      await fetch('/api/auth/admin/logout', { method: 'POST' });
-    } catch {}
-    if (isAdmin) {
-      try {
-        await supabase.auth.signOut();
-      } catch {}
-    }
-    document.cookie = 'yam_user_email=; path=/; max-age=0;';
-    document.cookie = 'yam_admin_2fa=; path=/; max-age=0;';
-    if (typeof window !== 'undefined') {
-      sessionStorage.removeItem('yam_user_email');
-      sessionStorage.removeItem('yam_session_active');
-      sessionStorage.removeItem('yam_admin_2fa');
-      if (isAdmin) localStorage.removeItem('yam_user_email');
-      else if (currentUserEmail) localStorage.setItem('yam_user_email', currentUserEmail);
-      localStorage.removeItem('yam_admin_2fa');
-      clearSessionConnectionLog(currentUserEmail ?? undefined);
-    }
-    router.replace('/login');
-  };
 
   // Validation email
   const cleanTargetEmail = targetEmail.trim().toLowerCase();
@@ -476,7 +503,7 @@ export default function HomePage() {
             onClick={() => setShowPricing(!showPricing)}
             className="px-3.5 py-1.5 rounded-full bg-indigo-600 hover:bg-indigo-500 font-bold text-xs text-white shadow-md transition-all cursor-pointer"
           >
-            {showPricing ? '✕ Fermer les tarifs' : '💎 Voir les tarifs & Licence'}
+            {showPricing ? '✕ Fermer les tarifs' : '💎 7 € avec pub, 12 € sans pub, soutien sans pub 50 € +'}
           </button>
         </div>
       </div>
@@ -507,63 +534,6 @@ export default function HomePage() {
       )}
 
       <div className="max-w-4xl w-full mx-auto px-4 sm:px-6 py-6 space-y-6">
-        {/* Barre d'état utilisateur avec Déconnexion direct & Compteur de 10 utilisations */}
-        <div className="flex flex-wrap items-center justify-between gap-4 bg-slate-900/90 border border-slate-800 p-4 sm:p-5 rounded-2xl shadow-xl">
-          <div className="flex items-center gap-3">
-            <span className="w-3 h-3 rounded-full bg-emerald-500 animate-pulse" />
-            <div>
-              <p className="text-xs text-slate-400">Connecté en tant que</p>
-              <p className="text-sm font-bold text-indigo-300">{currentUserEmail}</p>
-            </div>
-          </div>
-
-          {/* Compteur d'utilisations (Objectif 6) */}
-          <div className="flex items-center gap-2 sm:gap-3">
-            {usageError ? (
-              <span role="alert" className="text-xs font-semibold text-red-300">
-                Quota indisponible : {usageError}
-              </span>
-            ) : userUsage?.hasLicense ? (
-              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-amber-950/80 border border-amber-500/60 text-amber-300 shadow">
-                ⭐ Licence à Vie Active
-              </span>
-            ) : !userUsage ? (
-              <span role="status" className="text-xs font-semibold text-slate-400">
-                Vérification du quota serveur…
-              </span>
-            ) : (
-              <div className="flex items-center gap-2 bg-slate-950/80 border border-slate-800 px-3 py-1.5 rounded-xl">
-                <span className="text-xs font-semibold text-slate-300">
-                  🎯 <strong className={userUsage && userUsage.remaining <= 2 ? 'text-red-400' : 'text-indigo-400'}>
-                    {userUsage?.remaining ?? 10} / 10
-                  </strong> gratuits restants
-                </span>
-              </div>
-            )}
-
-            {isAdminUser && (
-              <button
-                onClick={() => setShowPricing(true)}
-                className="text-[11px] font-bold text-amber-400 hover:text-amber-300 underline cursor-pointer"
-              >
-                Gérer les tarifs
-              </button>
-            )}
-            <button
-              onClick={() => setShowLocalTest(!showLocalTest)}
-              className="text-xs px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 font-semibold transition-all cursor-pointer"
-            >
-              {showLocalTest ? '✕ Masquer' : '🎥 Test'}
-            </button>
-            <button
-              onClick={handleLogout}
-              className="text-xs px-3.5 py-1.5 rounded-xl bg-red-600 hover:bg-red-500 text-white font-bold shadow transition-all cursor-pointer"
-            >
-              🚪 Déconnexion
-            </button>
-          </div>
-        </div>
-
         {/* Bloc du test local de caméra / micro (maintenu pour les tests) */}
         {showLocalTest && (
           <div className="bg-slate-900 border border-indigo-500/40 rounded-2xl p-6 shadow-2xl animate-in fade-in space-y-4">

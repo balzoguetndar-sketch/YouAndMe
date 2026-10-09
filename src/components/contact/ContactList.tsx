@@ -119,43 +119,45 @@ export function ContactList({ currentUserEmail, onlineUsers, onSelectContact }: 
           {contacts.map((contact) => {
             const isOnline = onlineUsers.has(contact.contact_email);
             return (
-              <article key={contact.id} className="flex flex-col gap-4 rounded-2xl border border-slate-800 bg-slate-950/70 p-4 sm:flex-row sm:items-center sm:justify-between">
-                <div className="min-w-0">
-                  <p className="truncate text-sm font-semibold text-white">{contact.contact_email}</p>
-                  <div className="mt-2 flex items-center gap-2">
-                    <span className={`h-2.5 w-2.5 rounded-full ${isOnline ? 'bg-emerald-400 animate-ping' : 'bg-slate-500'}`} />
-                    <span className={`text-xs font-bold ${isOnline ? 'text-emerald-300' : 'text-slate-500'}`}>
+              <article key={contact.id} className="flex min-w-0 items-center gap-2 rounded-2xl border border-slate-800 bg-slate-950/70 p-3">
+                <div className="flex min-w-0 flex-1 items-center gap-2">
+                  <p className="min-w-0 flex-1 truncate text-sm font-semibold text-white">{contact.contact_email}</p>
+                  <div className="flex shrink-0 items-center gap-1.5">
+                    <span className={`h-2 w-2 rounded-full ${isOnline ? 'bg-emerald-400 animate-ping' : 'bg-slate-500'}`} />
+                    <span className={`whitespace-nowrap text-[10px] font-bold sm:text-xs ${isOnline ? 'text-emerald-300' : 'text-slate-500'}`}>
                       {isOnline ? 'En ligne' : 'Hors ligne'}
                     </span>
                   </div>
                 </div>
 
-                <div className="flex items-center gap-2">
+                <div className="flex shrink-0 items-center gap-1">
                   <button
                     type="button"
                     onClick={() => onSelectContact(contact.contact_email, 'video')}
                     disabled={!isOnline}
-                    className="rounded-xl bg-emerald-600 px-3 py-2 text-xs font-bold text-white hover:bg-emerald-500 disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-500"
+                    className="whitespace-nowrap rounded-lg bg-emerald-600 px-2 py-2 text-[10px] font-bold text-white hover:bg-emerald-500 disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-500 sm:text-xs"
                     title={isOnline ? 'Démarrer un appel vidéo' : 'Le correspondant est hors ligne'}
                   >
-                    📹 Vidéo
+                    📹 <span className="max-[420px]:sr-only">Vidéo</span>
                   </button>
                   <button
                     type="button"
                     onClick={() => onSelectContact(contact.contact_email, 'audio')}
                     disabled={!isOnline}
-                    className="rounded-xl bg-indigo-600 px-3 py-2 text-xs font-bold text-white hover:bg-indigo-500 disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-500"
+                    className="whitespace-nowrap rounded-lg bg-indigo-600 px-2 py-2 text-[10px] font-bold text-white hover:bg-indigo-500 disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-500 sm:text-xs"
                     title={isOnline ? 'Démarrer un appel audio' : 'Le correspondant est hors ligne'}
                   >
-                    🎙️ Audio
+                    🎙️ <span className="max-[420px]:sr-only">Audio</span>
                   </button>
                   <button
                     type="button"
                     onClick={() => void handleRemove(contact.id)}
-                    className="rounded-xl border border-slate-700 px-3 py-2 text-xs text-slate-400 hover:border-red-700 hover:text-red-300"
+                    className="whitespace-nowrap rounded-lg border border-slate-700 px-2 py-2 text-[10px] text-slate-400 hover:border-red-700 hover:text-red-300 sm:text-xs"
                     aria-label={`Supprimer ${contact.contact_email}`}
+                    title="Supprimer ce contact"
                   >
-                    Supprimer
+                    <span className="max-[420px]:sr-only">Supprimer</span>
+                    <span aria-hidden="true" className="hidden max-[420px]:inline">×</span>
                   </button>
                 </div>
               </article>

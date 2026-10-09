@@ -1,4 +1,4 @@
-'use client';
+ 'use client';
 
 import Link from 'next/link';
 import { useEffect, useRef, useState } from 'react';
@@ -17,22 +17,73 @@ export default function VerifyMagicLinkPage() {
     if (started.current) return;
     started.current = true;
 
-    const searchParams = new URLSearchParams(window.location.search);
-    const hashParams = new URLSearchParams(window.location.hash.slice(1));
-
-    const code = searchParams.get('code');
-    const tokenHash = searchParams.get('token_hash') ?? searchParams.get('token');
-    const accessToken = hashParams.get('access_token');
-    const refreshToken = hashParams.get('refresh_token');
-
-    // Récupération de la route de destination (par défaut la racine /)
-    const targetUrl = searchParams.get('next') || '/';
-
     const verify = async () => {
       try {
-        await Promise.resolve();
+        // Extraction explicite depuis window.location pour éviter que Supabase ne consomme le paramètre
+        const url = new URL(window.location.href);
+        const searchParams = url.searchParams;
+        const hashParams = new URLSearchParams(window.location.hash.slice(1));
 
-        // 1. Validation du jeton Supabase
+        const code = searchParams.get('code');
+        const tokenHash = searchParams.get('token_hash') ?? searchParams.get('token');
+        const accessToken = hashParams.get('access_token');
+        const refreshToken = hashParams.get('refresh_token');
+        const handoffId = searchParams.get('handoff');
+
+        const targetUrl = searchParams.get('next') || '/';
+
+        // CAS A : Connexion initiée depuis un autre navigateur (ex: Edge) -> Transmettre la credential
+        if (handoffId) {
+          let credential:
+            | { type: 'token_hash'; value: string }
+            | { type: 'code'; value: string }
+            | { type: 'session'; accessToken: string; refreshToken: string }
+            | null = null;
+
+          if (tokenHash) {
+            credential = { type: 'token_hash', value: tokenHash };
+          } else if (code) {
+            credential = { type: 'code', value: code };
+          } else if (accessToken && refreshToken) {
+            credential = { type: 'session', accessToken, refreshToken };
+          } else {
+            // En dernier recours uniquement, lire la session
+            const { data } = await supabase.auth.getSession();
+            if (data?.session) {
+              credential = {
+                type: 'session',
+                accessToken: data.session.access_token,
+                refreshToken: data.session.refresh_token,
+              };
+            }
+          }
+
+          if (!credential) {
+            throw new Error('Le lien magique ne contient pas de jeton valide à transmettre.');
+          }
+
+          const handoffResponse = await fetch('/api/auth/magic-link/handoff', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ handoffId, credential }),
+          });
+
+          const handoffData = (await handoffResponse.json()) as { error?: string };
+          if (!handoffResponse.ok) {
+            throw new Error(handoffData.error || 'Impossible de transmettre le lien au navigateur d’origine.');
+          }
+
+          // Déconnexion locale pour libérer Firefox et s'assurer que la session n'est ouverte QUE sur Edge
+          await supabase.auth.signOut({ scope: 'local' });
+
+          setStatus('success');
+          setMessage(
+            'Lien confirmé. Vous pouvez fermer cet onglet et revenir dans votre navigateur d’origine (ex: Edge) ; la connexion s’y terminera automatiquement.'
+          );
+          return;
+        }
+
+        // CAS B : Connexion directe sur le même navigateur
         if (code) {
           const { error } = await supabase.auth.exchangeCodeForSession(code);
           if (error) throw new Error(error.message);
@@ -52,19 +103,18 @@ export default function VerifyMagicLinkPage() {
           }
         }
 
-        // 2. Activer la session côté serveur
+        // Activer la session côté serveur
         const sessionResponse = await fetch('/api/auth/session', {
           method: 'POST',
           cache: 'no-store',
           headers: { 'x-yam-session-action': 'activate' },
         });
 
-        const sessionData = await sessionResponse.json() as { email?: string; error?: string };
+        const sessionData = (await sessionResponse.json()) as { email?: string; error?: string };
         if (!sessionResponse.ok || !sessionData.email) {
           throw new Error(sessionData.error || 'La session n’a pas pu être créée.');
         }
 
-        // 3. Sauvegarde locale de la session utilisateur
         sessionStorage.setItem('yam_user_email', sessionData.email);
         sessionStorage.setItem('yam_session_active', 'true');
         localStorage.setItem('yam_user_email', sessionData.email);
@@ -73,9 +123,8 @@ export default function VerifyMagicLinkPage() {
         await logUserConnection(sessionData.email);
 
         setStatus('success');
-        setMessage('Connexion validée. Entrée dans la salle d’appel…');
+        setMessage('Connexion validée. Entrée dans l’application…');
 
-        // 4. Redirection directe et ferme vers la salle d'appel
         window.location.href = targetUrl;
       } catch (error) {
         setStatus('error');
@@ -92,13 +141,20 @@ export default function VerifyMagicLinkPage() {
         <h1 className="text-xl font-bold text-white">Vérification de votre adresse</h1>
         {status === 'error' ? (
           <>
-            <p role="alert" className="text-sm text-red-300">{message}</p>
-            <Link href="/login" className="inline-flex rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500">
+            <p role="alert" className="text-sm text-red-300">
+              {message}
+            </p>
+            <Link
+              href="/login"
+              className="inline-flex rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500"
+            >
               Recommencer la connexion
             </Link>
           </>
         ) : (
-          <p role="status" className="text-sm text-slate-300">{message}</p>
+          <p role="status" className="text-sm text-emerald-300">
+            {message}
+          </p>
         )}
       </section>
     </main>

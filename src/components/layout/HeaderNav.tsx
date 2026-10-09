@@ -4,10 +4,14 @@ import { useEffect, useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import { createClient } from '@/src/lib/supabase/clients';
 import { ADMIN_EMAIL } from '@/src/lib/validation';
+import { clearSessionConnectionLog } from '@/src/lib/logger';
+import { soundManager } from '@/src/lib/sound';
+import { useHeaderActions } from '@/src/components/layout/HeaderActionsContext';
 
 export function HeaderNav() {
   const router = useRouter();
   const pathname = usePathname();
+  const { headerActions } = useHeaderActions();
   const [email, setEmail] = useState<string | null>(null);
   const supabase = createClient();
 
@@ -39,6 +43,7 @@ export function HeaderNav() {
   }, [pathname, supabase]);
 
   const handleLogout = async () => {
+    soundManager.stop();
     const isAdmin = email?.toLowerCase().trim() === ADMIN_EMAIL.toLowerCase();
     try {
       await fetch('/api/auth/admin/logout', { method: 'POST' });
@@ -57,6 +62,7 @@ export function HeaderNav() {
       if (isAdmin) localStorage.removeItem('yam_user_email');
       else if (email) localStorage.setItem('yam_user_email', email);
       localStorage.removeItem('yam_admin_2fa');
+      clearSessionConnectionLog(email ?? undefined);
     }
     router.replace('/login');
   };
@@ -72,7 +78,7 @@ export function HeaderNav() {
   const isAdmin = email.toLowerCase().trim() === ADMIN_EMAIL.toLowerCase().trim();
 
   return (
-    <div className="flex items-center gap-3">
+    <div className="flex flex-wrap items-center justify-end gap-2 sm:gap-3">
       {isAdmin && (
         <a
           href="/admin"
@@ -85,6 +91,8 @@ export function HeaderNav() {
       <span className="text-xs text-slate-300 font-medium hidden sm:inline truncate max-w-[200px]">
         {email}
       </span>
+
+      {headerActions}
 
       <button
         onClick={handleLogout}

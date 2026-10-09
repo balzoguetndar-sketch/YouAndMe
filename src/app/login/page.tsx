@@ -8,6 +8,11 @@ import { BannerCarousel } from '@/src/components/banner/BannerCarousel';
 import { PrivacyManifesto } from '@/src/components/layout/PrivacyManifesto';
 import { validateEmail, ADMIN_EMAIL } from '@/src/lib/validation';
 
+const MAGIC_HANDOFF_STORAGE_KEY = 'yam_magic_handoff';
+const MAGIC_HANDOFF_TTL_MS = 15 * 60 * 1000;
+
+type MagicHandoff = { id: string; email: string; createdAt: number };
+
 export default function LoginPage() {
   const [email, setEmail] = useState('');
   const [code, setCode] = useState('');
@@ -17,6 +22,7 @@ export default function LoginPage() {
   const [suggestedEmail, setSuggestedEmail] = useState<string | null>(null);
   const [rememberedEmail, setRememberedEmail] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [pendingHandoff, setPendingHandoff] = useState<MagicHandoff | null>(null);
 
   const router = useRouter();
   const supabase = createClient();
@@ -40,6 +46,150 @@ export default function LoginPage() {
 
     return () => { active = false; };
   }, [supabase]);
+
+  useEffect(() => {
+    const stored = sessionStorage.getItem(MAGIC_HANDOFF_STORAGE_KEY);
+    if (!stored) return;
+
+    let handoff: MagicHandoff;
+    try {
+      handoff = JSON.parse(stored) as MagicHandoff;
+      if (
+        typeof handoff.id === 'string'
+        && typeof handoff.email === 'string'
+        && typeof handoff.createdAt === 'number'
+        && Date.now() - handoff.createdAt < MAGIC_HANDOFF_TTL_MS
+      ) {
+        const restorationTimer = window.setTimeout(() => {
+          setPendingHandoff(handoff);
+          setEmail(handoff.email);
+          setInfoMessage('Lien magique envoyé. Ouvrez-le dans votre boîte e-mail ; cette page terminera la connexion automatiquement.');
+        }, 0);
+        return () => window.clearTimeout(restorationTimer);
+      } else {
+        sessionStorage.removeItem(MAGIC_HANDOFF_STORAGE_KEY);
+      }
+    } catch {
+      sessionStorage.removeItem(MAGIC_HANDOFF_STORAGE_KEY);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!pendingHandoff) return;
+
+    let stopped = false;
+    let timer: number | undefined;
+
+    const schedulePoll = () => {
+      if (!stopped) timer = window.setTimeout(() => void poll(), 4000);
+    };
+
+    const finishHandoff = async (credential: {
+      type: 'token_hash' | 'code' | 'session';
+      value?: string;
+      accessToken?: string;
+      refreshToken?: string;
+    }) => {
+      const { data: existingUser } = await supabase.auth.getUser();
+      const existingEmail = existingUser.user?.email?.trim().toLowerCase();
+
+      if (existingEmail !== pendingHandoff.email) {
+        if (credential.type === 'token_hash' && credential.value) {
+          const { error: verifyError } = await supabase.auth.verifyOtp({ token_hash: credential.value, type: 'magiclink' });
+          if (verifyError) throw verifyError;
+        } else if (credential.type === 'code' && credential.value) {
+          const { error: exchangeError } = await supabase.auth.exchangeCodeForSession(credential.value);
+          if (exchangeError) throw exchangeError;
+        } else if (credential.type === 'session' && credential.accessToken && credential.refreshToken) {
+          const { error: setSessionError } = await supabase.auth.setSession({
+            access_token: credential.accessToken,
+            refresh_token: credential.refreshToken,
+          });
+          if (setSessionError) throw setSessionError;
+        } else {
+          throw new Error('Le lien reçu ne contient pas de jeton de connexion valide.');
+        }
+      }
+
+      const { data: verifiedUser } = await supabase.auth.getUser();
+      const verifiedEmail = verifiedUser.user?.email?.trim().toLowerCase();
+      if (verifiedEmail !== pendingHandoff.email || !verifiedUser.user?.email_confirmed_at) {
+        await supabase.auth.signOut({ scope: 'local' });
+        throw new Error('Le lien reçu ne correspond pas à l’adresse demandée.');
+      }
+
+      const response = await fetch('/api/auth/session', {
+        method: 'POST',
+        cache: 'no-store',
+        headers: { 'x-yam-session-action': 'activate' },
+      });
+      const sessionData = await response.json() as { email?: string; error?: string };
+      if (!response.ok || sessionData.email !== pendingHandoff.email) {
+        throw new Error(sessionData.error || 'Impossible de finaliser la connexion dans ce navigateur.');
+      }
+
+      await fetch('/api/auth/magic-link/handoff', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ handoffId: pendingHandoff.id, acknowledge: true }),
+      });
+      sessionStorage.removeItem(MAGIC_HANDOFF_STORAGE_KEY);
+      sessionStorage.setItem('yam_user_email', sessionData.email);
+      sessionStorage.setItem('yam_session_active', 'true');
+      localStorage.setItem('yam_user_email', sessionData.email);
+      clearSessionConnectionLog(sessionData.email);
+      await logUserConnection(sessionData.email);
+      router.replace('/');
+    };
+
+    const poll = async () => {
+      if (stopped) return;
+      if (Date.now() - pendingHandoff.createdAt >= MAGIC_HANDOFF_TTL_MS) {
+        sessionStorage.removeItem(MAGIC_HANDOFF_STORAGE_KEY);
+        setPendingHandoff(null);
+        setError('Le délai de connexion est dépassé. Demandez un nouveau lien magique.');
+        setInfoMessage(null);
+        return;
+      }
+
+      try {
+        const response = await fetch(`/api/auth/magic-link/handoff?id=${encodeURIComponent(pendingHandoff.id)}`, {
+          cache: 'no-store',
+        });
+        if (response.status === 202) {
+          schedulePoll();
+          return;
+        }
+        if (response.status === 410) {
+          sessionStorage.removeItem(MAGIC_HANDOFF_STORAGE_KEY);
+          setPendingHandoff(null);
+          setError('Le lien magique a expiré. Demandez-en un nouveau.');
+          setInfoMessage(null);
+          return;
+        }
+        const data = await response.json() as {
+          ready?: boolean;
+          error?: string;
+          credential?: { type: 'token_hash' | 'code' | 'session'; value?: string; accessToken?: string; refreshToken?: string };
+        };
+        if (!response.ok || !data.ready || !data.credential) {
+          throw new Error(data.error || 'Impossible de récupérer la vérification du lien.');
+        }
+        await finishHandoff(data.credential);
+      } catch (handoffError) {
+        if (stopped) return;
+        setError(handoffError instanceof Error ? handoffError.message : 'Impossible de terminer la connexion.');
+        setInfoMessage('Le transfert attend encore. Cette page réessaiera automatiquement.');
+        schedulePoll();
+      }
+    };
+
+    void poll();
+    return () => {
+      stopped = true;
+      if (timer !== undefined) window.clearTimeout(timer);
+    };
+  }, [pendingHandoff, router, supabase]);
 
   const resumeStandardSession = async (expectedEmail: string): Promise<boolean> => {
     const { data } = await supabase.auth.getUser();
@@ -87,6 +237,8 @@ export default function LoginPage() {
     setError(null);
     setInfoMessage(null);
     setSuggestedEmail(null);
+    setPendingHandoff(null);
+    sessionStorage.removeItem(MAGIC_HANDOFF_STORAGE_KEY);
 
     const submittedEmail = new FormData(e.currentTarget).get('email');
     const emailToValidate = typeof submittedEmail === 'string' ? submittedEmail : email;
@@ -142,10 +294,16 @@ export default function LoginPage() {
         return;
       }
 
+      const handoff: MagicHandoff = {
+        id: crypto.randomUUID(),
+        email: cleanEmail,
+        createdAt: Date.now(),
+      };
+
       const magicLinkResponse = await fetch('/api/auth/magic-link', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: cleanEmail }),
+        body: JSON.stringify({ email: cleanEmail, handoffId: handoff.id }),
       });
       const magicLinkData = await magicLinkResponse.json() as {
         error?: string;
@@ -160,7 +318,9 @@ export default function LoginPage() {
 
       setLoading(false);
       setStep('email');
-      setInfoMessage(magicLinkData.message || 'Lien magique envoyé. Vérifiez votre boîte e-mail.');
+      sessionStorage.setItem(MAGIC_HANDOFF_STORAGE_KEY, JSON.stringify(handoff));
+      setPendingHandoff(handoff);
+      setInfoMessage('Lien magique envoyé. Ouvrez-le dans votre boîte e-mail ; cette page terminera la connexion automatiquement.');
     } catch (err: unknown) {
       setLoading(false);
       const message = err instanceof Error ? err.message : 'Vérifiez votre connexion internet.';

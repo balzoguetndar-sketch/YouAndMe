@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from 'next';
 import './globals.css';
 import { HeaderNav } from '@/src/components/layout/HeaderNav';
+import { HeaderActionsProvider } from '@/src/components/layout/HeaderActionsContext';
 import { InstallPrompt } from '@/src/components/pwa/InstallPrompt';
 
 export const viewport: Viewport = {
@@ -51,23 +52,25 @@ export default function RootLayout({
           Aller au contenu principal
         </a>
 
-        <div className="flex min-h-screen flex-col">
-          <header className="border-b border-slate-800 bg-slate-900/50 backdrop-blur px-4 py-3">
-            <div className="mx-auto flex max-w-7xl items-center justify-between gap-2">
-              <span className="text-xl font-bold tracking-tight text-indigo-400">
-                You&Me
-              </span>
-              <div className="flex shrink-0 items-center gap-2 sm:gap-3">
-                <InstallPrompt />
-                <HeaderNav />
+        <HeaderActionsProvider>
+          <div className="flex min-h-screen flex-col">
+            <header className="border-b border-slate-800 bg-slate-900/50 backdrop-blur px-4 py-3">
+              <div className="mx-auto flex max-w-7xl items-center justify-between gap-2">
+                <span className="text-xl font-bold tracking-tight text-indigo-400">
+                  You&Me
+                </span>
+                <div className="flex shrink-0 items-center gap-2 sm:gap-3">
+                  <InstallPrompt />
+                  <HeaderNav />
+                </div>
               </div>
-            </div>
-          </header>
+            </header>
 
-          <main id="main-content" className="flex-1">
-            {children}
-          </main>
-        </div>
+            <main id="main-content" className="flex-1">
+              {children}
+            </main>
+          </div>
+        </HeaderActionsProvider>
       </body>
     </html>
   );

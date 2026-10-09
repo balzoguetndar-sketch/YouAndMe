@@ -2,6 +2,8 @@ import { createClient } from '@supabase/supabase-js';
 import { NextResponse } from 'next/server';
 import { validateEmail } from '@/src/lib/validation';
 
+const HANDOFF_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
 async function sendMagicLinkEmail(email: string, actionLink: string): Promise<void> {
   const apiKey = process.env.RESEND_API_KEY;
   const fromEmail = process.env.RESEND_FROM_EMAIL || 'onboarding@resend.dev';
@@ -44,7 +46,7 @@ async function sendMagicLinkEmail(email: string, actionLink: string): Promise<vo
 
 export async function POST(request: Request) {
   try {
-    const { email } = (await request.json()) as { email?: unknown };
+    const { email, handoffId } = (await request.json()) as { email?: unknown; handoffId?: unknown };
     const cleanEmail = typeof email === 'string' ? email : '';
     const { isValid, cleanEmail: validatedEmail } = validateEmail(cleanEmail);
 
@@ -53,6 +55,10 @@ export async function POST(request: Request) {
         { error: 'Saisissez une adresse e-mail valide.' },
         { status: 400 }
       );
+    }
+
+    if (typeof handoffId !== 'string' || !HANDOFF_ID_PATTERN.test(handoffId)) {
+      return NextResponse.json({ error: 'Impossible de préparer le retour vers ce navigateur.' }, { status: 400 });
     }
 
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -72,11 +78,13 @@ export async function POST(request: Request) {
       ? process.env.LOCAL_APP_URL || requestOrigin
       : requestOrigin;
 
-    const redirectTo = new URL('/verify?next=/', redirectOrigin).toString();
+    const redirectUrl = new URL('/verify', redirectOrigin);
+    redirectUrl.searchParams.set('next', '/');
+    redirectUrl.searchParams.set('handoff', handoffId);
     const { data, error } = await adminSupabase.auth.admin.generateLink({
       email: validatedEmail,
       type: 'magiclink',
-      options: { redirectTo },
+      options: { redirectTo: redirectUrl.toString() },
     });
 
     if (error) {
