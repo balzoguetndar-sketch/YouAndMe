@@ -27,6 +27,17 @@ set license_tier = case
       else true
     end;
 
-alter table public.user_usage
-  add constraint user_usage_license_tier_check
-  check (license_tier in ('free', 'ad_supported', 'no_ads', 'supporter', 'legacy'));
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_constraint
+    where conrelid = 'public.user_usage'::regclass
+      and conname = 'user_usage_license_tier_check'
+  ) then
+    alter table public.user_usage
+      add constraint user_usage_license_tier_check
+      check (license_tier in ('free', 'ad_supported', 'no_ads', 'supporter', 'legacy'));
+  end if;
+end;
+$$ language plpgsql;

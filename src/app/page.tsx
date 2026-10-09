@@ -18,6 +18,7 @@ import { logUserConnection, clearSessionConnectionLog } from '@/src/lib/logger';
 import { PricingPlans } from '@/src/components/subscription/PricingPlans';
 import { getUserUsage, incrementUserUsage, UserUsageInfo } from '@/src/lib/usage';
 import { UsageLimitModal } from '@/src/components/subscription/UsageLimitModal';
+import { ContactList } from '@/src/components/contact/ContactList';
 import { ADMIN_EMAIL } from '@/src/lib/validation';
 
 type Ambience = 'neutral' | 'love' | 'family' | 'couple' | 'friendship';
@@ -81,21 +82,26 @@ export default function HomePage() {
       let email: string | null = null;
 
       if (typeof window !== 'undefined') {
-        const activeSession = sessionStorage.getItem('yam_session_active') === 'true';
-        const sessionEmail = sessionStorage.getItem('yam_user_email');
-
-        // Si la session n'est pas active dans cet onglet/cette fenêtre (ex: après fermeture/réouverture)
-        if (!activeSession || !sessionEmail) {
-          document.cookie = 'yam_user_email=; path=/; max-age=0;';
-          document.cookie = 'yam_admin_2fa=; path=/; max-age=0;';
-          try {
-            await supabase.auth.signOut();
-          } catch {}
+        const response = await fetch('/api/auth/session', { method: 'POST', cache: 'no-store' });
+        const sessionData = await response.json() as { email?: string; error?: string };
+        if (!response.ok || !sessionData.email) {
+          if (response.status === 401 || response.status === 409) {
+            try {
+              await supabase.auth.signOut({ scope: 'local' });
+            } catch {}
+          }
+          await fetch('/api/auth/admin/logout', { method: 'POST' }).catch(() => {});
+          sessionStorage.removeItem('yam_user_email');
+          sessionStorage.removeItem('yam_session_active');
           router.replace('/login');
           return;
         }
 
-        email = sessionEmail;
+        email = sessionData.email;
+        sessionStorage.setItem('yam_user_email', email);
+        sessionStorage.setItem('yam_session_active', 'true');
+        localStorage.setItem('yam_user_email', email);
+        window.dispatchEvent(new Event('yam-session-restored'));
       }
 
       if (!email) {
@@ -137,6 +143,33 @@ export default function HomePage() {
     initAuth();
   }, [router, supabase]);
 
+  useEffect(() => {
+    if (!currentUserEmail || isAdminUser) return;
+
+    let checking = false;
+    const checkActiveSession = async () => {
+      if (checking) return;
+      checking = true;
+      try {
+        const response = await fetch('/api/auth/session', { method: 'POST', cache: 'no-store' });
+        if (response.status === 401 || response.status === 409) {
+          await supabase.auth.signOut({ scope: 'local' });
+          await fetch('/api/auth/admin/logout', { method: 'POST' }).catch(() => {});
+          sessionStorage.removeItem('yam_user_email');
+          sessionStorage.removeItem('yam_session_active');
+          router.replace('/login');
+        }
+      } catch {
+        // A temporary network failure should not invalidate a trusted session.
+      } finally {
+        checking = false;
+      }
+    };
+
+    const interval = window.setInterval(() => void checkActiveSession(), 10000);
+    return () => window.clearInterval(interval);
+  }, [currentUserEmail, isAdminUser, router, supabase]);
+
   // 3. Gestion de la présence en temps réel et signalisation d'appels entrants
   useEffect(() => {
     if (!currentUserEmail) return;
@@ -177,19 +210,23 @@ export default function HomePage() {
 
   const handleLogout = async () => {
     soundManager.stop();
+    const isAdmin = currentUserEmail?.toLowerCase() === ADMIN_EMAIL.toLowerCase();
     try {
       await fetch('/api/auth/admin/logout', { method: 'POST' });
     } catch {}
-    try {
-      await supabase.auth.signOut();
-    } catch {}
+    if (isAdmin) {
+      try {
+        await supabase.auth.signOut();
+      } catch {}
+    }
     document.cookie = 'yam_user_email=; path=/; max-age=0;';
     document.cookie = 'yam_admin_2fa=; path=/; max-age=0;';
     if (typeof window !== 'undefined') {
       sessionStorage.removeItem('yam_user_email');
       sessionStorage.removeItem('yam_session_active');
       sessionStorage.removeItem('yam_admin_2fa');
-      localStorage.removeItem('yam_user_email');
+      if (isAdmin) localStorage.removeItem('yam_user_email');
+      else if (currentUserEmail) localStorage.setItem('yam_user_email', currentUserEmail);
       localStorage.removeItem('yam_admin_2fa');
       clearSessionConnectionLog(currentUserEmail ?? undefined);
     }
@@ -275,6 +312,12 @@ export default function HomePage() {
       sender: currentUserEmail,
       target: caller,
     });
+  };
+
+  const handleSelectContact = (contactEmail: string, selectedCallType: CallType) => {
+    setTargetEmail(contactEmail);
+    setCallType(selectedCallType);
+    window.scrollTo({ top: document.getElementById('contact-form')?.offsetTop ?? 0, behavior: 'smooth' });
   };
 
   // Enregistrement Mémo Audio / Vidéo différé
@@ -502,8 +545,15 @@ export default function HomePage() {
           </div>
         )}
 
+        {/* Carnet de contacts */}
+        <ContactList
+          currentUserEmail={currentUserEmail ?? ''}
+          onlineUsers={onlineUsers}
+          onSelectContact={handleSelectContact}
+        />
+
         {/* Formulaire principal : Saisie de l'interlocuteur & Signalisation */}
-        <div className="bg-slate-900/90 border border-slate-800 rounded-3xl p-6 sm:p-8 shadow-2xl space-y-6">
+        <div id="contact-form" className="bg-slate-900/90 border border-slate-800 rounded-3xl p-6 sm:p-8 shadow-2xl space-y-6">
           <div className="space-y-2">
             <h2 className="text-xl sm:text-2xl font-extrabold text-white">
               Contacter un interlocuteur

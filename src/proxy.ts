@@ -18,6 +18,7 @@ export async function proxy(request: NextRequest) {
   const pathname = request.nextUrl.pathname;
   const isLoginPage = pathname === '/login';
   const isAuthCallback = pathname.startsWith('/auth');
+  const isMagicLinkVerify = pathname === '/verify';
   const isApiRoute = pathname.startsWith('/api');
   const isAdminRoute = pathname.startsWith('/admin');
 
@@ -31,7 +32,7 @@ export async function proxy(request: NextRequest) {
   }
 
   // 2. Protection des routes générales : Redirection vers /login si session absente
-  if (!isValid && !isLoginPage && !isAuthCallback && !isApiRoute) {
+  if (!isValid && !isLoginPage && !isAuthCallback && !isMagicLinkVerify && !isApiRoute) {
     return NextResponse.redirect(new URL('/login', request.url));
   }
 

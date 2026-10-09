@@ -31,7 +31,12 @@ export async function GET() {
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
-    return NextResponse.json({ logs: logs || [] });
+    const maskedLogs = (logs ?? []).map((log) => ({
+      ...log,
+      ip_address: 'Masqué',
+    }));
+
+    return NextResponse.json({ logs: maskedLogs });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Erreur inconnue';
     return NextResponse.json({ error: message }, { status: 500 });

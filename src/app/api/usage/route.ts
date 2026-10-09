@@ -3,6 +3,7 @@ import { cookies } from 'next/headers';
 import { createClient } from '@supabase/supabase-js';
 import { createClient as createAuthClient } from '@/src/lib/supabase/server';
 import { ADMIN_SESSION_COOKIE, verifyAdminSessionToken } from '@/src/lib/adminAuth';
+import { isActiveStandardSession } from '@/src/lib/standardSession';
 import { getLicenseAccess, type LicenseTier, type StoredLicense } from '@/src/lib/license';
 import { ADMIN_EMAIL, validateEmail } from '@/src/lib/validation';
 
@@ -56,6 +57,7 @@ async function getSessionEmail(): Promise<string | null> {
   if (error || data.user?.email?.toLowerCase() !== result.cleanEmail || !data.user.email_confirmed_at) {
     return null;
   }
+  if (!(await isActiveStandardSession(data.user.id))) return null;
 
   return result.cleanEmail;
 }

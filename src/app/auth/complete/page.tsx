@@ -16,7 +16,11 @@ export default function CompleteAuthPage() {
 
     const completeSignIn = async () => {
       try {
-        const response = await fetch('/api/auth/session', { method: 'POST', cache: 'no-store' });
+        const response = await fetch('/api/auth/session', {
+          method: 'POST',
+          cache: 'no-store',
+          headers: { 'x-yam-session-action': 'activate' },
+        });
         const data = await response.json() as { email?: string; error?: string };
         if (!response.ok || !data.email) {
           throw new Error(data.error || 'Le lien n’a pas permis de vérifier cette adresse.');
@@ -24,7 +28,7 @@ export default function CompleteAuthPage() {
 
         sessionStorage.setItem('yam_user_email', data.email);
         sessionStorage.setItem('yam_session_active', 'true');
-        localStorage.removeItem('yam_user_email');
+        localStorage.setItem('yam_user_email', data.email);
         clearSessionConnectionLog(data.email);
         await logUserConnection(data.email);
         router.replace('/');

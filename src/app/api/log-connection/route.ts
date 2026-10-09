@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { getPrivacySafeIp } from '@/src/lib/ipPrivacy';
 
 const LOG_DEDUPE_WINDOW_MS = 30000;
 
@@ -18,10 +19,8 @@ export async function POST(request: Request) {
       return NextResponse.json({ success: false, error: 'Email required' }, { status: 400 });
     }
 
-    // Récupération de l'adresse IP et User-Agent réels
-    const forwardedFor = request.headers.get('x-forwarded-for');
-    const realIp = request.headers.get('x-real-ip');
-    const clientIp = forwardedFor ? forwardedFor.split(',')[0].trim() : (realIp || '127.0.0.1');
+    // L’IP brute ne est jamais persistée ni exposée aux utilisateurs.
+    const clientIp = getPrivacySafeIp(request);
     const userAgent = request.headers.get('user-agent') || 'Navigateur Web';
     const since = new Date(Date.now() - LOG_DEDUPE_WINDOW_MS).toISOString();
 
@@ -52,7 +51,7 @@ export async function POST(request: Request) {
         started_at: nowISO,
         ended_at: nowISO,
         created_at: nowISO,
-        location: clientIp === '127.0.0.1' ? 'Local' : 'En ligne',
+        location: 'En ligne',
       },
     ]);
 

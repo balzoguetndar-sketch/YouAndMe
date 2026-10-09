@@ -1,12 +1,13 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import { createClient } from '@/src/lib/supabase/clients';
 import { ADMIN_EMAIL } from '@/src/lib/validation';
 
 export function HeaderNav() {
   const router = useRouter();
+  const pathname = usePathname();
   const [email, setEmail] = useState<string | null>(null);
   const supabase = createClient();
 
@@ -14,7 +15,6 @@ export function HeaderNav() {
     const checkActiveSession = () => {
       if (typeof window === 'undefined') return;
 
-      const pathname = window.location.pathname;
       if (pathname === '/login') {
         setEmail(null);
         return;
@@ -34,20 +34,28 @@ export function HeaderNav() {
     };
 
     checkActiveSession();
-  }, [supabase]);
+    window.addEventListener('yam-session-restored', checkActiveSession);
+    return () => window.removeEventListener('yam-session-restored', checkActiveSession);
+  }, [pathname, supabase]);
 
   const handleLogout = async () => {
+    const isAdmin = email?.toLowerCase().trim() === ADMIN_EMAIL.toLowerCase();
     try {
       await fetch('/api/auth/admin/logout', { method: 'POST' });
-      await supabase.auth.signOut();
     } catch {}
+    if (isAdmin) {
+      try {
+        await supabase.auth.signOut();
+      } catch {}
+    }
     document.cookie = 'yam_user_email=; path=/; max-age=0;';
     document.cookie = 'yam_admin_2fa=; path=/; max-age=0;';
     if (typeof window !== 'undefined') {
       sessionStorage.removeItem('yam_user_email');
       sessionStorage.removeItem('yam_session_active');
       sessionStorage.removeItem('yam_admin_2fa');
-      localStorage.removeItem('yam_user_email');
+      if (isAdmin) localStorage.removeItem('yam_user_email');
+      else if (email) localStorage.setItem('yam_user_email', email);
       localStorage.removeItem('yam_admin_2fa');
     }
     router.replace('/login');

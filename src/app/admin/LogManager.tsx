@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { getMaskedIpLabel } from '@/src/lib/ipPrivacy';
 
 export type ConnectionLog = {
   id: string;
@@ -330,7 +331,7 @@ export function LogManager({ initialLogs = [] }: LogManagerProps) {
                   return (
                     <tr key={log.id} className="hover:bg-slate-800/40 transition-colors">
                       <td className="px-5 py-3 font-semibold text-indigo-300">{log.email}</td>
-                      <td className="px-5 py-3 font-mono text-xs text-slate-400">{log.ip_address}</td>
+                      <td className="px-5 py-3 font-mono text-xs text-slate-400">{getMaskedIpLabel()}</td>
                       <td className="px-5 py-3 text-xs text-slate-400">
                         {timestamp ? new Date(timestamp).toLocaleString('fr-FR') : 'Date inconnue'}
                       </td>
