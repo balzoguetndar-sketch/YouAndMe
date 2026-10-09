@@ -12,7 +12,18 @@ const MAGIC_HANDOFF_STORAGE_KEY = 'yam_magic_handoff';
 const MAGIC_HANDOFF_TTL_MS = 15 * 60 * 1000;
 
 type MagicHandoff = { id: string; email: string; createdAt: number };
-
+// Fonction pour générer un UUID valide sur tous les navigateurs (PC et Mobile)
+function generateUUID(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return '10000000-1000-4000-8000-100000000000'.replace(/[018]/g, (c) =>
+    (
+      Number(c) ^
+      (crypto.getRandomValues(new Uint8Array(1))[0] & (15 >> (Number(c) / 4)))
+    ).toString(16)
+  );
+}
 export default function LoginPage() {
   const [email, setEmail] = useState('');
   const [code, setCode] = useState('');
@@ -295,7 +306,7 @@ export default function LoginPage() {
       }
 
       const handoff: MagicHandoff = {
-        id: crypto.randomUUID(),
+        id: generateUUID(),
         email: cleanEmail,
         createdAt: Date.now(),
       };
