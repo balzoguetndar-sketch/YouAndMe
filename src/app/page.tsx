@@ -27,6 +27,7 @@ type CallType = 'video' | 'audio';
 export default function HomePage() {
   const router = useRouter();
   const [currentUserEmail, setCurrentUserEmail] = useState<string | null>(null);
+  const [authCheckError, setAuthCheckError] = useState<string | null>(null);
   const [userUsage, setUserUsage] = useState<UserUsageInfo | null>(null);
   const [usageError, setUsageError] = useState<string | null>(null);
   const [showUsageModal, setShowUsageModal] = useState(false);
@@ -82,22 +83,35 @@ export default function HomePage() {
       let email: string | null = null;
 
       if (typeof window !== 'undefined') {
-        const response = await fetch('/api/auth/session', { method: 'POST', cache: 'no-store' });
-        const sessionData = await response.json() as { email?: string; error?: string };
-        if (!response.ok || !sessionData.email) {
-          if (response.status === 401 || response.status === 409) {
-            try {
-              await supabase.auth.signOut({ scope: 'local' });
-            } catch {}
-          }
+        let response: Response;
+        let sessionData: { email?: string; error?: string };
+        try {
+          response = await fetch('/api/auth/session', { method: 'POST', cache: 'no-store' });
+          sessionData = await response.json() as { email?: string; error?: string };
+        } catch {
+          setAuthCheckError('Le service de connexion est momentanément indisponible. Réessayez sans fermer cette page.');
+          setLoading(false);
+          return;
+        }
+
+        if (response.status === 401 || response.status === 409) {
+          try {
+            await supabase.auth.signOut({ scope: 'local' });
+          } catch {}
           await fetch('/api/auth/admin/logout', { method: 'POST' }).catch(() => {});
           sessionStorage.removeItem('yam_user_email');
           sessionStorage.removeItem('yam_session_active');
           router.replace('/login');
           return;
         }
+        if (!response.ok || !sessionData.email) {
+          setAuthCheckError(sessionData.error || 'Impossible de vérifier la session pour le moment. Réessayez sans fermer cette page.');
+          setLoading(false);
+          return;
+        }
 
         email = sessionData.email;
+        setAuthCheckError(null);
         sessionStorage.setItem('yam_user_email', email);
         sessionStorage.setItem('yam_session_active', 'true');
         localStorage.setItem('yam_user_email', email);
@@ -375,6 +389,24 @@ export default function HomePage() {
           <div className="w-8 h-8 border-3 border-indigo-500 border-t-transparent rounded-full animate-spin" />
           <p className="text-xs text-slate-400">Chargement de votre espace You&Me...</p>
         </div>
+      </main>
+    );
+  }
+
+  if (authCheckError) {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-slate-950 p-4 text-slate-100">
+        <section className="w-full max-w-md space-y-4 rounded-2xl border border-slate-800 bg-slate-900 p-6 text-center">
+          <h1 className="text-lg font-bold text-white">Connexion temporairement indisponible</h1>
+          <p role="alert" className="text-sm text-red-300">{authCheckError}</p>
+          <button
+            type="button"
+            onClick={() => window.location.reload()}
+            className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500"
+          >
+            Réessayer
+          </button>
+        </section>
       </main>
     );
   }
