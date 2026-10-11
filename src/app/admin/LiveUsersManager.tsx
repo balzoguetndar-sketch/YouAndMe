@@ -1,8 +1,8 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { createClient } from '@/src/lib/supabase/clients';
-import { subscribeToPresence, subscribeToSignals, sendSignal, SignalData } from '@/src/lib/webrtc';
+import { subscribeToPresence, subscribeToSignals, sendSignal, sendCallRequestUntilReceived, SignalData } from '@/src/lib/webrtc';
 import { soundManager } from '@/src/lib/sound';
 import { logUserConnection } from '@/src/lib/logger';
 import { ActiveCallRoom } from '@/src/components/call/ActiveCallRoom';
@@ -20,12 +20,17 @@ export function LiveUsersManager({ adminEmail }: LiveUsersManagerProps) {
 
   // Gestion des appels directs pour l'administrateur
   const [activeCallPeer, setActiveCallPeer] = useState<string | null>(null);
+  const [activeCallId, setActiveCallId] = useState<string | null>(null);
+  const activeCallIdRef = useRef<string | null>(null);
+  const incomingCallIdRef = useRef<string | null>(null);
+  const handledCallRequestIdsRef = useRef(new Set<string>());
   const [callType, setCallType] = useState<'video' | 'audio'>('video');
   const [isInitiator, setIsInitiator] = useState(true);
   const [incomingCall, setIncomingCall] = useState<{
     callerEmail: string;
     callType: 'video' | 'audio';
     ambience: string;
+    callId: string;
   } | null>(null);
 
   const supabase = createClient();
@@ -80,22 +85,41 @@ export function LiveUsersManager({ adminEmail }: LiveUsersManagerProps) {
     // Écoute des signaux WebRTC
     const unsubscribeSignals = subscribeToSignals(myEmail, (signal: SignalData) => {
       if (signal.type === 'call-request') {
+        if (signal.target.toLowerCase() !== myEmail.toLowerCase() || !signal.callId) return;
+        void sendSignal(signal.sender, {
+          type: 'call-request-received',
+          sender: myEmail,
+          target: signal.sender,
+          callId: signal.callId,
+        });
+        if (handledCallRequestIdsRef.current.has(signal.callId)) return;
+        handledCallRequestIdsRef.current.add(signal.callId);
+        incomingCallIdRef.current = signal.callId;
         setIncomingCall({
           callerEmail: signal.sender,
           callType: signal.callType || 'video',
           ambience: signal.ambience || 'neutral',
+          callId: signal.callId,
         });
       } else if (signal.type === 'call-accepted') {
+        if (signal.callId !== activeCallIdRef.current) return;
         soundManager.stop();
         // L'interlocuteur a accepté
       } else if (signal.type === 'call-rejected') {
+        if (signal.callId !== activeCallIdRef.current) return;
         soundManager.stop();
         alert(`${activeCallPeer || 'L’utilisateur'} a décliné l'appel.`);
         setActiveCallPeer(null);
+        activeCallIdRef.current = null;
+        setActiveCallId(null);
       } else if (signal.type === 'call-ended') {
+        if (signal.callId !== activeCallIdRef.current && signal.callId !== incomingCallIdRef.current) return;
         soundManager.stop();
         setActiveCallPeer(null);
         setIncomingCall(null);
+        activeCallIdRef.current = null;
+        incomingCallIdRef.current = null;
+        setActiveCallId(null);
       }
     });
 
@@ -124,18 +148,29 @@ export function LiveUsersManager({ adminEmail }: LiveUsersManagerProps) {
     setCallType(type);
     setIsInitiator(true);
     setActiveCallPeer(cleanPeer);
+    const callId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    activeCallIdRef.current = callId;
+    setActiveCallId(callId);
 
     // Déclenche la tonalité d'attente sortante pour l'administrateur
     soundManager.startOutgoingRingtone();
 
     // Envoi du signal d'appel
-    await sendSignal(cleanPeer, {
+    const received = await sendCallRequestUntilReceived(cleanPeer, {
       type: 'call-request',
       sender: myEmail,
       target: cleanPeer,
+      callId,
       callType: type,
       ambience: 'neutral',
     });
+    if (!received) {
+      soundManager.stop();
+      activeCallIdRef.current = null;
+      setActiveCallId(null);
+      setActiveCallPeer(null);
+      alert('La réception de l’invitation n’a pas été confirmée après plusieurs tentatives. Vérifiez que votre correspondant est connecté puis réessayez.');
+    }
   };
 
   // Accepter un appel entrant
@@ -144,15 +179,20 @@ export function LiveUsersManager({ adminEmail }: LiveUsersManagerProps) {
 
     soundManager.stop();
     const caller = incomingCall.callerEmail;
+    const callId = incomingCall.callId;
     setCallType(incomingCall.callType);
     setIsInitiator(false);
     setActiveCallPeer(caller);
+    activeCallIdRef.current = callId;
+    incomingCallIdRef.current = null;
+    setActiveCallId(callId);
     setIncomingCall(null);
 
     await sendSignal(caller, {
       type: 'call-accepted',
       sender: myEmail,
       target: caller,
+      callId,
     });
   };
 
@@ -162,24 +202,31 @@ export function LiveUsersManager({ adminEmail }: LiveUsersManagerProps) {
 
     soundManager.stop();
     const caller = incomingCall.callerEmail;
+    const callId = incomingCall.callId;
     setIncomingCall(null);
+    incomingCallIdRef.current = null;
 
     await sendSignal(caller, {
       type: 'call-rejected',
       sender: myEmail,
       target: caller,
+      callId,
     });
   };
 
   const handleEndCall = () => {
     soundManager.stop();
+    const callId = activeCallIdRef.current;
     if (activeCallPeer && myEmail) {
       sendSignal(activeCallPeer, {
         type: 'call-ended',
         sender: myEmail,
         target: activeCallPeer,
+        callId: callId || undefined,
       }).catch(() => {});
     }
+    activeCallIdRef.current = null;
+    setActiveCallId(null);
     setActiveCallPeer(null);
   };
 
@@ -213,6 +260,7 @@ export function LiveUsersManager({ adminEmail }: LiveUsersManagerProps) {
             <ActiveCallRoom
               callerEmail={myEmail}
               receiverEmail={activeCallPeer}
+              callId={activeCallId || ''}
               isInitiator={isInitiator}
               callType={callType}
               ambience="neutral"

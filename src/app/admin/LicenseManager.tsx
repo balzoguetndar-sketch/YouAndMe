@@ -2,94 +2,173 @@
 
 import { useState } from 'react';
 
-export function LicenseManager() {
-  const [email, setEmail] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+type PlanType = '7euro' | '12euro' | '50euro';
 
-  const handleUnlock = async () => {
-    if (!email.trim()) {
-      setFeedback({ type: 'error', text: 'Saisis l’email de l’utilisateur à débloquer.' });
+export function LicenseManager() {
+  const [targetEmail, setTargetEmail] = useState('');
+  const [selectedPlan, setSelectedPlan] = useState<PlanType>('7euro');
+  const [loading, setLoading] = useState(false);
+  const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  // Attribution ou rectification de licence via l'API Admin
+  const handleAssignLicense = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const cleanEmail = targetEmail.trim().toLowerCase();
+
+    if (!cleanEmail) {
+      setMessage({ type: 'error', text: 'Veuillez saisir une adresse e-mail valide.' });
       return;
     }
 
     setLoading(true);
-    setFeedback(null);
+    setMessage(null);
 
     try {
       const response = await fetch('/api/admin/licenses', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          email: email.trim().toLowerCase(),
+          email: cleanEmail,
+          planType: selectedPlan,
+          action: 'assign_license',
+        }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Erreur lors de la mise à jour de la licence.');
+      }
+
+      setMessage({
+        type: 'success',
+        text: data.message || `Licence attribuée avec succès à ${cleanEmail}.`,
+      });
+      setTargetEmail('');
+    } catch (err) {
+      setMessage({
+        type: 'error',
+        text: err instanceof Error ? err.message : 'Erreur de communication avec le serveur.',
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Réinitialisation simple du quota
+  const handleResetQuotaOnly = async () => {
+    const cleanEmail = targetEmail.trim().toLowerCase();
+    if (!cleanEmail) {
+      setMessage({ type: 'error', text: 'Veuillez saisir une adresse e-mail.' });
+      return;
+    }
+
+    setLoading(true);
+    setMessage(null);
+
+    try {
+      const response = await fetch('/api/admin/licenses', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: cleanEmail,
           action: 'reset_quota',
         }),
       });
 
-      const result: { error?: string; message?: string } = await response.json();
+      const data = await response.json();
 
       if (!response.ok) {
-        setFeedback({ type: 'error', text: result.error || 'Impossible de débloquer cet utilisateur.' });
-        return;
+        throw new Error(data.error || 'Erreur lors de la réinitialisation.');
       }
 
-      setFeedback({ type: 'success', text: result.message || 'Quota remis à zéro.' });
-      setEmail('');
-    } catch {
-      setFeedback({ type: 'error', text: 'Erreur de connexion au serveur.' });
+      setMessage({
+        type: 'success',
+        text: data.message || `Quota remis à zéro pour ${cleanEmail}.`,
+      });
+      setTargetEmail('');
+    } catch (err) {
+      setMessage({
+        type: 'error',
+        text: err instanceof Error ? err.message : 'Erreur lors de la réinitialisation.',
+      });
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <section className="rounded-2xl border border-indigo-500/20 bg-[radial-gradient(circle_at_top,_rgba(99,102,241,0.14),_transparent_45%)] p-4 shadow-[0_0_0_1px_rgba(148,163,184,0.06)] sm:p-5">
-      <div className="mb-4 flex items-start justify-between gap-3 border-b border-slate-800 pb-3">
-        <div>
-          <p className="text-[10px] uppercase tracking-[0.18em] text-indigo-300/80">Gestion accès</p>
-          <h2 className="mt-1 text-base font-bold text-slate-100">Déblocage manuel du quota</h2>
-        </div>
-        <div className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-emerald-300">
-          Safe mode
-        </div>
+    <section className="bg-slate-900 border border-slate-800 rounded-2xl p-5 sm:p-6 shadow-xl space-y-5">
+      <div className="border-b border-slate-800 pb-3 flex items-center justify-between">
+        <h2 className="text-base sm:text-lg font-bold text-slate-200 flex items-center gap-2">
+          <span>🔑</span> Gestion & Rectification des Licences Utilisateurs
+        </h2>
+        <span className="text-xs text-indigo-400 font-medium">Mise à jour sécurisée via Service Role</span>
       </div>
 
-      <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-end">
-        <div>
-          <label htmlFor="unlock-email" className="mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-400">
-            Email de l’utilisateur
-          </label>
-          <input
-            id="unlock-email"
-            type="email"
-            autoComplete="off"
-            value={email}
-            onChange={(event) => setEmail(event.target.value)}
-            placeholder="utilisateur@exemple.com"
-            className="w-full rounded-xl border border-slate-700 bg-slate-950/80 px-3 py-2.5 text-sm text-white placeholder:text-slate-500 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
-          />
+      <form onSubmit={handleAssignLicense} className="space-y-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="space-y-1.5">
+            <label htmlFor="admin-license-email" className="block text-xs font-semibold text-slate-300">
+              Adresse e-mail de l&apos;utilisateur
+            </label>
+            <input
+              id="admin-license-email"
+              type="email"
+              value={targetEmail}
+              onChange={(e) => setTargetEmail(e.target.value)}
+              placeholder="utilisateur@exemple.com"
+              className="w-full rounded-xl bg-slate-950 border border-slate-800 px-3.5 py-2.5 text-xs text-slate-100 placeholder-slate-600 focus:outline-none focus:border-indigo-500 font-mono"
+            />
+          </div>
+
+          <div className="space-y-1.5">
+            <label htmlFor="admin-license-plan" className="block text-xs font-semibold text-slate-300">
+              Formule / Type de licence à attribuer
+            </label>
+            <select
+              id="admin-license-plan"
+              value={selectedPlan}
+              onChange={(e) => setSelectedPlan(e.target.value as PlanType)}
+              className="w-full rounded-xl bg-slate-950 border border-slate-800 px-3.5 py-2.5 text-xs text-slate-100 focus:outline-none focus:border-indigo-500"
+            >
+              <option value="7euro">7 € / an — Licence Annuelle (avec publicité)</option>
+              <option value="12euro">12 € / an — Licence Annuelle (sans publicité)</option>
+              <option value="50euro">50 € + — Licence à Vie VIP (sans publicité)</option>
+            </select>
+          </div>
         </div>
 
-        <button
-          type="button"
-          onClick={handleUnlock}
-          disabled={loading || !email.trim()}
-          className="rounded-xl bg-gradient-to-r from-emerald-500 to-emerald-400 px-4 py-2.5 text-sm font-bold text-slate-950 shadow-lg shadow-emerald-500/20 transition-all hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          {loading ? 'Déblocage…' : 'Remettre à zéro'}
-        </button>
-      </div>
+        <div className="flex flex-wrap items-center gap-3 pt-2">
+          <button
+            type="submit"
+            disabled={loading || !targetEmail.trim()}
+            className="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-xs font-bold text-white transition-all shadow-md cursor-pointer disabled:opacity-50"
+          >
+            {loading ? 'Enregistrement…' : '✅ Attribuer / Rectifier la Licence'}
+          </button>
 
-      {feedback && (
-        <p
-          role="status"
-          className={`mt-4 rounded-xl border px-3 py-2.5 text-sm ${feedback.type === 'success'
-            ? 'border-emerald-700/60 bg-emerald-950/40 text-emerald-300'
-            : 'border-red-700/60 bg-red-950/40 text-red-300'
-            }`}
+          <button
+            type="button"
+            onClick={handleResetQuotaOnly}
+            disabled={loading || !targetEmail.trim()}
+            className="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs font-bold text-slate-200 transition-all cursor-pointer disabled:opacity-50"
+          >
+            🔄 Réinitialiser le Quota seul (0 / 10)
+          </button>
+        </div>
+      </form>
+
+      {message && (
+        <div
+          className={`p-3 rounded-xl text-xs font-semibold ${
+            message.type === 'success'
+              ? 'bg-emerald-950/80 text-emerald-300 border border-emerald-800'
+              : 'bg-red-950/80 text-red-300 border border-red-800'
+          }`}
         >
-          {feedback.text}
-        </p>
+          {message.text}
+        </div>
       )}
     </section>
   );

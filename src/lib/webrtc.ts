@@ -3,21 +3,31 @@ import type { RealtimeChannel } from '@supabase/supabase-js';
 
 export type SignalType =
   | 'call-request'
+  | 'call-request-received'
   | 'call-accepted'
   | 'call-rejected'
   | 'call-ended'
   | 'offer'
   | 'answer'
-  | 'ice-candidate';
+  | 'ice-candidate'
+  | 'peer-ready';
 
 export type SignalData = {
   type: SignalType;
   sender: string;
   target: string;
+  callId?: string;
   payload?: unknown;
   ambience?: string;
   callType?: 'audio' | 'video';
 };
+
+const callRequestReceiptListeners = new Set<(signal: SignalData) => void>();
+
+export function subscribeToCallRequestReceipts(onReceipt: (signal: SignalData) => void) {
+  callRequestReceiptListeners.add(onReceipt);
+  return () => callRequestReceiptListeners.delete(onReceipt);
+}
 
 export const ICE_SERVERS: RTCConfiguration = {
   iceServers: [
@@ -48,7 +58,8 @@ export const ICE_SERVERS: RTCConfiguration = {
  */
 export function subscribeToSignals(
   userEmail: string,
-  onSignalReceived: (data: SignalData) => void
+  onSignalReceived: (data: SignalData) => void,
+  onSubscribed?: () => void
 ) {
   const cleanEmail = userEmail.toLowerCase().trim().replace(/[^a-zA-Z0-9_-]/g, '_');
   const supabase = createClient();
@@ -63,10 +74,16 @@ export function subscribeToSignals(
   channel
     .on('broadcast', { event: 'signal' }, (payload) => {
       if (payload && payload.payload) {
-        onSignalReceived(payload.payload as SignalData);
+        const signal = payload.payload as SignalData;
+        onSignalReceived(signal);
+        if (signal.type === 'call-request-received') {
+          callRequestReceiptListeners.forEach((listener) => listener(signal));
+        }
       }
     })
-    .subscribe();
+    .subscribe((status) => {
+      if (status === 'SUBSCRIBED') onSubscribed?.();
+    });
 
   return () => {
     try {
@@ -85,23 +102,30 @@ export async function sendSignal(targetEmail: string, signal: SignalData): Promi
 
   return new Promise<boolean>((resolve) => {
     let finished = false;
+    const timeout = { current: undefined as ReturnType<typeof setTimeout> | undefined };
     const existingChannels = supabase.getChannels();
     let channel = existingChannels.find((ch) => ch.topic === `realtime:${channelName}`);
+
+    const finish = (success: boolean, ch?: RealtimeChannel) => {
+      if (finished) return;
+      finished = true;
+      if (timeout.current) clearTimeout(timeout.current);
+      if (!success && ch) void supabase.removeChannel(ch);
+      resolve(success);
+    };
 
     const transmit = async (ch: RealtimeChannel) => {
       if (finished) return;
       try {
-        await ch.send({
+        const status = await ch.send({
           type: 'broadcast',
           event: 'signal',
           payload: signal,
         });
-        finished = true;
-        resolve(true);
+        finish(status === 'ok', ch);
       } catch (err) {
         console.warn('Erreur transmission signal WebRTC :', err);
-        finished = true;
-        resolve(false);
+        finish(false, ch);
       }
     };
 
@@ -118,18 +142,85 @@ export async function sendSignal(targetEmail: string, signal: SignalData): Promi
       });
     }
 
-    const fallbackTimeout = setTimeout(() => {
+    const activeChannel = channel;
+    timeout.current = setTimeout(() => {
       if (!finished && channel) {
-        transmit(channel);
+        if (activeChannel.state === 'joined') {
+          void transmit(activeChannel);
+        } else {
+          finish(false, activeChannel);
+        }
       }
-    }, 1200);
+    }, 5000);
 
-    channel.subscribe((status) => {
-      if (status === 'SUBSCRIBED' && channel) {
-        clearTimeout(fallbackTimeout);
-        transmit(channel);
+    try {
+      activeChannel.subscribe((status) => {
+        if (status === 'SUBSCRIBED') {
+          if (timeout.current) clearTimeout(timeout.current);
+          void transmit(activeChannel);
+        } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+          finish(false, activeChannel);
+        }
+      });
+    } catch (err) {
+      console.warn('Erreur lors de la souscription au canal WebRTC :', err);
+      finish(false, activeChannel);
+    }
+  });
+}
+
+export function sendCallRequestUntilReceived(
+  targetEmail: string,
+  signal: SignalData,
+  maxWaitMs = 15000,
+  retryIntervalMs = 1200
+): Promise<boolean> {
+  if (signal.type !== 'call-request' || !signal.callId) return Promise.resolve(false);
+
+  return new Promise<boolean>((resolve) => {
+    let finished = false;
+    let sending = false;
+    let attempts = 0;
+    let retryTimer: ReturnType<typeof setInterval> | null = null;
+    let timeout: ReturnType<typeof setTimeout> | null = null;
+    let unsubscribe: (() => void) | null = null;
+
+    const finish = (received: boolean) => {
+      if (finished) return;
+      finished = true;
+      if (retryTimer) clearInterval(retryTimer);
+      if (timeout) clearTimeout(timeout);
+      unsubscribe?.();
+      resolve(received);
+    };
+
+    const transmit = async () => {
+      if (finished || sending || attempts >= 12) return;
+      sending = true;
+      attempts += 1;
+      try {
+        const sent = await sendSignal(targetEmail, signal);
+        if (!sent && attempts >= 12) finish(false);
+      } catch (error) {
+        console.warn('Erreur lors de la transmission de la demande d’appel :', error);
+        if (attempts >= 12) finish(false);
+      } finally {
+        sending = false;
       }
+    };
+
+    unsubscribe = subscribeToCallRequestReceipts((reply) => {
+      if (
+        reply.type === 'call-request-received' &&
+        reply.callId === signal.callId &&
+        reply.sender.toLowerCase() === targetEmail.toLowerCase() &&
+        reply.target.toLowerCase() === signal.sender.toLowerCase()
+      ) finish(true);
     });
+
+    void transmit();
+    retryTimer = setInterval(() => void transmit(), retryIntervalMs);
+    timeout = setTimeout(() => finish(false), maxWaitMs);
   });
 }
 

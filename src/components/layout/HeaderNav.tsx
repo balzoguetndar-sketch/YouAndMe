@@ -8,11 +8,18 @@ import { clearSessionConnectionLog } from '@/src/lib/logger';
 import { soundManager } from '@/src/lib/sound';
 import { useHeaderActions } from '@/src/components/layout/HeaderActionsContext';
 
+type UserLicenseInfo = {
+  has_license?: boolean;
+  plan_type?: string | null;
+  license_key?: string | null;
+};
+
 export function HeaderNav() {
   const router = useRouter();
   const pathname = usePathname();
   const { headerActions } = useHeaderActions();
   const [email, setEmail] = useState<string | null>(null);
+  const [licenseInfo, setLicenseInfo] = useState<UserLicenseInfo | null>(null);
   const supabase = createClient();
 
   useEffect(() => {
@@ -21,6 +28,7 @@ export function HeaderNav() {
 
       if (pathname === '/login') {
         setEmail(null);
+        setLicenseInfo(null);
         return;
       }
 
@@ -28,19 +36,65 @@ export function HeaderNav() {
       const sessionEmail = sessionStorage.getItem('yam_user_email');
       const cookieMatch = document.cookie.match(/yam_user_email=([^;]+)/);
 
+      let currentEmail: string | null = null;
       if (activeSession && sessionEmail) {
-        setEmail(sessionEmail);
+        currentEmail = sessionEmail;
       } else if (cookieMatch && activeSession) {
-        setEmail(decodeURIComponent(cookieMatch[1]));
-      } else {
-        setEmail(null);
+        currentEmail = decodeURIComponent(cookieMatch[1]);
       }
+
+      setEmail(currentEmail);
     };
 
     checkActiveSession();
     window.addEventListener('yam-session-restored', checkActiveSession);
     return () => window.removeEventListener('yam-session-restored', checkActiveSession);
-  }, [pathname, supabase]);
+  }, [pathname]);
+
+  // Récupération de la licence utilisateur en temps réel
+  useEffect(() => {
+    if (!email) {
+      setLicenseInfo(null);
+      return;
+    }
+
+    const fetchLicense = async () => {
+      const { data } = await supabase
+        .from('user_usage')
+        .select('has_license, plan_type, license_key')
+        .eq('email', email.trim().toLowerCase())
+        .maybeSingle();
+
+      if (data) {
+        setLicenseInfo(data);
+      }
+    };
+
+    fetchLicense();
+
+    // Écoute Realtime des modifications sur la table user_usage
+    const channel = supabase
+      .channel(`user_usage_${email}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'user_usage',
+          filter: `email=eq.${email.trim().toLowerCase()}`,
+        },
+        (payload) => {
+          if (payload.new) {
+            setLicenseInfo(payload.new as UserLicenseInfo);
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [email, supabase]);
 
   const handleLogout = async () => {
     soundManager.stop();
@@ -67,6 +121,45 @@ export function HeaderNav() {
     router.replace('/login');
   };
 
+  // Helper pour afficher le badge de licence correct
+  const renderLicenseBadge = () => {
+    if (!licenseInfo || (!licenseInfo.has_license && !licenseInfo.license_key)) {
+      return null;
+    }
+
+    const { plan_type, license_key } = licenseInfo;
+
+    if (plan_type === '7euro') {
+      return (
+        <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-amber-950 text-amber-300 border border-amber-800">
+          ⭐ Licence Annuelle (avec pub)
+        </span>
+      );
+    }
+
+    if (plan_type === '12euro') {
+      return (
+        <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-indigo-950 text-indigo-300 border border-indigo-800">
+          💎 Licence Annuelle (sans pub)
+        </span>
+      );
+    }
+
+    if (plan_type === '50euro' || license_key?.includes('supporter')) {
+      return (
+        <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-purple-950 text-purple-300 border border-purple-800">
+          👑 Licence à Vie VIP
+        </span>
+      );
+    }
+
+    return (
+      <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-slate-800 text-slate-200 border border-slate-700">
+        ⭐ Licence Active
+      </span>
+    );
+  };
+
   if (!email) {
     return (
       <span className="text-xs rounded-full bg-slate-900 px-3 py-1 text-slate-400 border border-slate-800">
@@ -87,6 +180,9 @@ export function HeaderNav() {
           👑 Panneau Admin
         </a>
       )}
+
+      {/* Affichage dynamique du badge de licence */}
+      {renderLicenseBadge()}
 
       <span className="text-xs text-slate-300 font-medium hidden sm:inline truncate max-w-[200px]">
         {email}

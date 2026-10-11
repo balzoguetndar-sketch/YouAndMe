@@ -68,7 +68,7 @@ export default async function AdminPage() {
           >
             <span>📱</span> Basculer vers l&apos;Espace Utilisateur
           </Link>
-          <LogoutButton />
+          {/* <LogoutButton /> */}
         </div>
       </div>
 

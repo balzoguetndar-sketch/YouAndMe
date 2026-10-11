@@ -1,10 +1,10 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { createClient } from '@/src/lib/supabase/clients';
 import { ActiveCallRoom } from './ActiveCallRoom';
 import { IncomingCallModal } from './IncomingCallModal';
-import { subscribeToPresence, subscribeToSignals, sendSignal, SignalData } from '@/src/lib/webrtc';
+import { subscribeToPresence, subscribeToSignals, sendSignal, sendCallRequestUntilReceived, SignalData } from '@/src/lib/webrtc';
 import { soundManager } from '@/src/lib/sound';
 
 type Ambience = 'neutral' | 'love' | 'family' | 'couple' | 'friendship';
@@ -21,12 +21,17 @@ export function CallLauncher() {
   const [inCall, setInCall] = useState(false);
   const [isCalling, setIsCalling] = useState(false);
   const [isInitiator, setIsInitiator] = useState(true);
+  const [activeCallId, setActiveCallId] = useState<string | null>(null);
+  const activeCallIdRef = useRef<string | null>(null);
+  const incomingCallIdRef = useRef<string | null>(null);
+  const handledCallRequestIdsRef = useRef(new Set<string>());
 
   // Appel entrant reçu
   const [incomingCall, setIncomingCall] = useState<{
     callerEmail: string;
     callType: CallType;
     ambience: string;
+    callId: string;
   } | null>(null);
 
   const supabase = createClient();
@@ -80,26 +85,45 @@ export function CallLauncher() {
 
     const unsubscribeSignals = subscribeToSignals(myEmail, (signal: SignalData) => {
       if (signal.type === 'call-request') {
+        if (signal.target.toLowerCase() !== myEmail.toLowerCase() || !signal.callId) return;
+        void sendSignal(signal.sender, {
+          type: 'call-request-received',
+          sender: myEmail,
+          target: signal.sender,
+          callId: signal.callId,
+        });
+        if (handledCallRequestIdsRef.current.has(signal.callId)) return;
+        handledCallRequestIdsRef.current.add(signal.callId);
         // Un utilisateur appelle l'administrateur
+        incomingCallIdRef.current = signal.callId;
         setIncomingCall({
           callerEmail: signal.sender,
           callType: signal.callType || 'video',
           ambience: signal.ambience || 'neutral',
+          callId: signal.callId,
         });
       } else if (signal.type === 'call-accepted') {
+        if (signal.callId !== activeCallIdRef.current) return;
         soundManager.stop();
         setIsCalling(false);
         setInCall(true);
       } else if (signal.type === 'call-rejected') {
+        if (signal.callId !== activeCallIdRef.current) return;
         soundManager.stop();
         setIsCalling(false);
         setInCall(false);
+        activeCallIdRef.current = null;
+        setActiveCallId(null);
         alert('Votre interlocuteur a décliné l’appel.');
       } else if (signal.type === 'call-ended') {
+        if (signal.callId !== activeCallIdRef.current && signal.callId !== incomingCallIdRef.current) return;
         soundManager.stop();
         setIsCalling(false);
         setInCall(false);
         setIncomingCall(null);
+        activeCallIdRef.current = null;
+        incomingCallIdRef.current = null;
+        setActiveCallId(null);
       }
     });
 
@@ -120,29 +144,45 @@ export function CallLauncher() {
 
     setIsInitiator(true);
     setIsCalling(true);
+    const callId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    activeCallIdRef.current = callId;
+    setActiveCallId(callId);
 
     // Joue la sonnerie sortante d'attente
     soundManager.startOutgoingRingtone();
 
     // Envoi du signal d'appel
-    await sendSignal(cleanPeer, {
+    const received = await sendCallRequestUntilReceived(cleanPeer, {
       type: 'call-request',
       sender: myEmail,
       target: cleanPeer,
+      callId,
       callType,
       ambience,
     });
+
+    if (!received) {
+      soundManager.stop();
+      setIsCalling(false);
+      activeCallIdRef.current = null;
+      setActiveCallId(null);
+      alert('La réception de l’invitation n’a pas été confirmée après plusieurs tentatives. Vérifiez que votre correspondant est connecté puis réessayez.');
+    }
   };
 
   // Annuler un appel sortant
   const handleCancelCall = async () => {
     soundManager.stop();
     setIsCalling(false);
+    const callId = activeCallIdRef.current;
+    activeCallIdRef.current = null;
+    setActiveCallId(null);
     if (cleanPeer && myEmail) {
       await sendSignal(cleanPeer, {
         type: 'call-ended',
         sender: myEmail,
         target: cleanPeer,
+        callId: callId || undefined,
       });
     }
   };
@@ -156,6 +196,9 @@ export function CallLauncher() {
     setCallType(incomingCall.callType);
     setAmbience(incomingCall.ambience as Ambience);
     setIsInitiator(false);
+    activeCallIdRef.current = incomingCall.callId;
+    incomingCallIdRef.current = null;
+    setActiveCallId(incomingCall.callId);
     setInCall(true);
     setIncomingCall(null);
 
@@ -163,6 +206,7 @@ export function CallLauncher() {
       type: 'call-accepted',
       sender: myEmail,
       target: incomingCall.callerEmail,
+      callId: incomingCall.callId,
     });
   };
 
@@ -172,28 +216,36 @@ export function CallLauncher() {
 
     soundManager.stop();
     const caller = incomingCall.callerEmail;
+    const callId = incomingCall.callId;
     setIncomingCall(null);
+    incomingCallIdRef.current = null;
 
     await sendSignal(caller, {
       type: 'call-rejected',
       sender: myEmail,
       target: caller,
+      callId,
     });
   };
+
+  const handleEndCall = useCallback(() => {
+    soundManager.stop();
+    setInCall(false);
+    setIsCalling(false);
+    activeCallIdRef.current = null;
+    setActiveCallId(null);
+  }, []);
 
   if (inCall && myEmail && cleanPeer) {
     return (
       <ActiveCallRoom
         callerEmail={myEmail}
         receiverEmail={cleanPeer}
+        callId={activeCallId || ''}
         isInitiator={isInitiator}
         callType={callType}
         ambience={ambience}
-        onEndCall={() => {
-          soundManager.stop();
-          setInCall(false);
-          setIsCalling(false);
-        }}
+        onEndCall={handleEndCall}
       />
     );
   }

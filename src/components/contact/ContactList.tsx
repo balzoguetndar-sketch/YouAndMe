@@ -22,9 +22,19 @@ export function ContactList({ currentUserEmail, onlineUsers, onSelectContact }: 
     async function loadContacts() {
       try {
         const response = await fetch('/api/contacts', { cache: 'no-store' });
-        const data = await response.json() as { contacts?: Contact[]; error?: string };
+        
+        // Vérification sécurisée du type de contenu
+        const contentType = response.headers.get('content-type');
+        if (!contentType || !contentType.includes('application/json')) {
+          throw new Error('Le serveur de contacts n’est pas disponible temporairement.');
+        }
+
+        const data = (await response.json()) as { contacts?: Contact[]; error?: string };
         if (!response.ok) throw new Error(data.error || 'Impossible de charger les contacts.');
-        if (active) setContacts(data.contacts ?? []);
+        if (active) {
+          setContacts(data.contacts ?? []);
+          setError(null);
+        }
       } catch (loadError) {
         if (active) setError(loadError instanceof Error ? loadError.message : 'Impossible de charger les contacts.');
       } finally {
@@ -33,7 +43,9 @@ export function ContactList({ currentUserEmail, onlineUsers, onSelectContact }: 
     }
 
     void loadContacts();
-    return () => { active = false; };
+    return () => {
+      active = false;
+    };
   }, []);
 
   const handleAdd = async (event: FormEvent<HTMLFormElement>) => {
@@ -47,7 +59,13 @@ export function ContactList({ currentUserEmail, onlineUsers, onSelectContact }: 
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ contactEmail: newEmail }),
       });
-      const data = await response.json() as { contact?: Contact; error?: string };
+
+      const contentType = response.headers.get('content-type');
+      if (!contentType || !contentType.includes('application/json')) {
+        throw new Error('Erreur réseau lors de l’ajout.');
+      }
+
+      const data = (await response.json()) as { contact?: Contact; error?: string };
       if (!response.ok || !data.contact) throw new Error(data.error || 'Impossible d’ajouter le contact.');
       setContacts((current) => [data.contact as Contact, ...current]);
       setNewEmail('');
@@ -66,7 +84,13 @@ export function ContactList({ currentUserEmail, onlineUsers, onSelectContact }: 
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ contactId }),
       });
-      const data = await response.json() as { error?: string };
+
+      const contentType = response.headers.get('content-type');
+      if (!contentType || !contentType.includes('application/json')) {
+        throw new Error('Erreur réseau lors de la suppression.');
+      }
+
+      const data = (await response.json()) as { error?: string };
       if (!response.ok) throw new Error(data.error || 'Impossible de supprimer le contact.');
       setContacts((current) => current.filter((contact) => contact.id !== contactId));
     } catch (removeError) {

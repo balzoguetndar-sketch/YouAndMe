@@ -9,10 +9,17 @@ import { Whiteboard } from '@/src/components/collaboration/Whiteboard';
 import { FileShare } from '@/src/components/collaboration/FileShare';
 import { AudioLevelVisualizer } from '@/src/components/call/AudioLevelVisualizer';
 import { isMediaPermissionError } from '@/src/lib/mediaPermissions';
+import type { RealtimeChannel } from '@supabase/supabase-js';
+
+type WhiteboardOpenRequest = {
+  requestId: string;
+  senderEmail: string;
+};
 
 type ActiveCallRoomProps = {
   callerEmail: string;
   receiverEmail: string;
+  callId: string;
   isInitiator?: boolean;
   callType: 'video' | 'audio';
   ambience: string;
@@ -22,6 +29,7 @@ type ActiveCallRoomProps = {
 export function ActiveCallRoom({
   callerEmail,
   receiverEmail,
+  callId,
   isInitiator = true,
   callType,
   ambience,
@@ -33,6 +41,8 @@ export function ActiveCallRoom({
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
   const remoteStreamRef = useRef<MediaStream | null>(null);
+  const whiteboardControlChannelRef = useRef<RealtimeChannel | null>(null);
+  const outgoingWhiteboardRequestIdRef = useRef<string | null>(null);
 
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [remoteAudioStream, setRemoteAudioStream] = useState<MediaStream | null>(null);
@@ -44,6 +54,10 @@ export function ActiveCallRoom({
   const [camOff, setCamOff] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState<'connecting' | 'connected' | 'disconnected'>('connecting');
   const [activeTab, setActiveTab] = useState<'video' | 'tarifs' | 'whiteboard' | 'files'>('video');
+  const [isWhiteboardControlReady, setIsWhiteboardControlReady] = useState(false);
+  const [incomingWhiteboardRequest, setIncomingWhiteboardRequest] = useState<WhiteboardOpenRequest | null>(null);
+  const [outgoingWhiteboardRequestId, setOutgoingWhiteboardRequestId] = useState<string | null>(null);
+  const [whiteboardRequestStatus, setWhiteboardRequestStatus] = useState<'accepted' | 'declined' | 'unavailable' | null>(null);
   const [showPricingSetting, setShowPricingSetting] = useState<boolean>(() => {
     if (typeof window === 'undefined') {
       return true;
@@ -71,6 +85,98 @@ export function ActiveCallRoom({
       supabase.removeChannel(channel);
     };
   }, [supabase]);
+
+  useEffect(() => {
+    let isActive = true;
+    const channel = supabase.channel(`whiteboard-control:${roomId}`);
+    whiteboardControlChannelRef.current = channel;
+
+    channel
+      .on('broadcast', { event: 'open-request' }, ({ payload }) => {
+        const senderEmail = typeof payload?.from === 'string' ? payload.from : '';
+        const targetEmail = typeof payload?.to === 'string' ? payload.to : '';
+        const requestId = typeof payload?.requestId === 'string' ? payload.requestId : '';
+
+        if (
+          !requestId ||
+          senderEmail.toLowerCase() !== receiverEmail.toLowerCase() ||
+          targetEmail.toLowerCase() !== callerEmail.toLowerCase()
+        ) return;
+
+        setIncomingWhiteboardRequest({ requestId, senderEmail });
+      })
+      .on('broadcast', { event: 'open-response' }, ({ payload }) => {
+        const senderEmail = typeof payload?.from === 'string' ? payload.from : '';
+        const targetEmail = typeof payload?.to === 'string' ? payload.to : '';
+
+        if (
+          payload?.requestId !== outgoingWhiteboardRequestIdRef.current ||
+          senderEmail.toLowerCase() !== receiverEmail.toLowerCase() ||
+          targetEmail.toLowerCase() !== callerEmail.toLowerCase()
+        ) return;
+
+        outgoingWhiteboardRequestIdRef.current = null;
+        setOutgoingWhiteboardRequestId(null);
+        setWhiteboardRequestStatus(payload.accepted === true ? 'accepted' : 'declined');
+      })
+      .subscribe((status) => {
+        if (isActive) setIsWhiteboardControlReady(status === 'SUBSCRIBED');
+      });
+
+    return () => {
+      isActive = false;
+      whiteboardControlChannelRef.current = null;
+      supabase.removeChannel(channel);
+    };
+  }, [supabase, roomId, callerEmail, receiverEmail]);
+
+  const handleOpenWhiteboard = () => {
+    setActiveTab('whiteboard');
+    setWhiteboardRequestStatus(null);
+
+    const channel = whiteboardControlChannelRef.current;
+    if (!isWhiteboardControlReady || !channel) {
+      setWhiteboardRequestStatus('unavailable');
+      return;
+    }
+
+    const requestId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    outgoingWhiteboardRequestIdRef.current = requestId;
+    setOutgoingWhiteboardRequestId(requestId);
+    void channel.send({
+      type: 'broadcast',
+      event: 'open-request',
+      payload: { requestId, from: callerEmail, to: receiverEmail },
+    }).then((status) => {
+      if (status !== 'ok') {
+        outgoingWhiteboardRequestIdRef.current = null;
+        setOutgoingWhiteboardRequestId(null);
+        setWhiteboardRequestStatus('unavailable');
+      }
+    });
+  };
+
+  const respondToWhiteboardRequest = async (accepted: boolean) => {
+    const request = incomingWhiteboardRequest;
+    const channel = whiteboardControlChannelRef.current;
+    if (!request || !channel) return;
+
+    setIncomingWhiteboardRequest(null);
+    if (accepted) setActiveTab('whiteboard');
+
+    const status = await channel.send({
+      type: 'broadcast',
+      event: 'open-response',
+      payload: {
+        requestId: request.requestId,
+        from: callerEmail,
+        to: request.senderEmail,
+        accepted,
+      },
+    });
+
+    if (status !== 'ok') setWhiteboardRequestStatus('unavailable');
+  };
 
   // 2. Initialisation WebRTC complète avec file d'attente ICE Candidate sécurisée
   useEffect(() => {
@@ -161,6 +267,7 @@ export function ActiveCallRoom({
           type: 'ice-candidate',
           sender: callerEmail,
           target: receiverEmail,
+          callId,
           payload: event.candidate.toJSON(),
         });
       }
@@ -169,6 +276,44 @@ export function ActiveCallRoom({
     let resolveMediaReady: () => void;
     const mediaReadyPromise = new Promise<void>((resolve) => {
       resolveMediaReady = resolve;
+    });
+    let offerSent = false;
+    let remoteOfferReceived = false;
+    let remoteAnswerReceived = false;
+    let readyRetryTimer: ReturnType<typeof setInterval> | null = null;
+
+    const createAndSendOffer = async () => {
+      if (offerSent || !isInitiator) return;
+      offerSent = true;
+      await mediaReadyPromise;
+      if (!isMounted) return;
+
+      try {
+        const offer = await pc.createOffer({
+          offerToReceiveAudio: true,
+          offerToReceiveVideo: callType === 'video',
+        });
+        await pc.setLocalDescription(offer);
+        await sendSignal(receiverEmail, {
+          type: 'offer',
+          sender: callerEmail,
+          target: receiverEmail,
+          callId,
+          payload: offer,
+          callType,
+          ambience,
+        });
+      } catch (offerErr) {
+        offerSent = false;
+        console.error('Erreur création offer :', offerErr);
+      }
+    };
+
+    const sendPeerReady = () => sendSignal(receiverEmail, {
+      type: 'peer-ready',
+      sender: callerEmail,
+      target: receiverEmail,
+      callId,
     });
 
     // Démarrage des médias locaux et signalisation
@@ -268,57 +413,61 @@ export function ActiveCallRoom({
         resolveMediaReady();
       }
 
-      // Si l'utilisateur est l'appelant, il crée l'offre WebRTC
-      if (isInitiator) {
-        try {
-          const offer = await pc.createOffer({
-            offerToReceiveAudio: true,
-            offerToReceiveVideo: callType === 'video',
-          });
-          await pc.setLocalDescription(offer);
-          await sendSignal(receiverEmail, {
-            type: 'offer',
-            sender: callerEmail,
-            target: receiverEmail,
-            payload: offer,
-            callType,
-            ambience,
-          });
-        } catch (offerErr) {
-          console.error('Erreur création offer :', offerErr);
-        }
-      }
     }
 
     initCall();
 
     // Écoute des signaux WebRTC distants
     const unsubscribeSignals = subscribeToSignals(callerEmail, async (signal: SignalData) => {
-      if (!isMounted || !pcRef.current) return;
+      if (
+        !isMounted ||
+        !pcRef.current ||
+        signal.callId !== callId ||
+        signal.sender.toLowerCase() !== receiverEmail.toLowerCase() ||
+        signal.target.toLowerCase() !== callerEmail.toLowerCase()
+      ) return;
       const currentPc = pcRef.current;
 
       try {
         if (signal.type === 'offer' && !isInitiator) {
+          if (remoteOfferReceived || currentPc.signalingState !== 'stable') return;
+          remoteOfferReceived = true;
+          if (readyRetryTimer) clearInterval(readyRetryTimer);
           // Attendre impérativement que les pistes locales soient capturées et ajoutées au PC avant de générer la réponse
           await mediaReadyPromise;
 
-          await currentPc.setRemoteDescription(
-            new RTCSessionDescription(signal.payload as RTCSessionDescriptionInit)
-          );
-          await processPendingIceCandidates();
+          if (!isMounted || currentPc.signalingState !== 'stable') return;
 
-          const answer = await currentPc.createAnswer();
-          await currentPc.setLocalDescription(answer);
-          await sendSignal(receiverEmail, {
-            type: 'answer',
-            sender: callerEmail,
-            target: receiverEmail,
-            payload: answer,
-          });
+          try {
+            await currentPc.setRemoteDescription(
+              new RTCSessionDescription(signal.payload as RTCSessionDescriptionInit)
+            );
+            await processPendingIceCandidates();
+
+            const answer = await currentPc.createAnswer();
+            await currentPc.setLocalDescription(answer);
+            await sendSignal(receiverEmail, {
+              type: 'answer',
+              sender: callerEmail,
+              target: receiverEmail,
+              callId,
+              payload: answer,
+            });
+          } catch (error) {
+            remoteOfferReceived = false;
+            throw error;
+          }
         } else if (signal.type === 'answer' && isInitiator) {
-          await currentPc.setRemoteDescription(
-            new RTCSessionDescription(signal.payload as RTCSessionDescriptionInit)
-          );
+          if (remoteAnswerReceived || currentPc.signalingState !== 'have-local-offer') return;
+          remoteAnswerReceived = true;
+          try {
+            await currentPc.setRemoteDescription(
+              new RTCSessionDescription(signal.payload as RTCSessionDescriptionInit)
+            );
+          } catch (error) {
+            remoteAnswerReceived = false;
+            throw error;
+          }
           await processPendingIceCandidates();
         } else if (signal.type === 'ice-candidate' && signal.payload) {
           // PROTECTION : Si la description distante n'est pas encore prête, on met en file d'attente
@@ -335,9 +484,19 @@ export function ActiveCallRoom({
           }
         } else if (signal.type === 'call-ended') {
           onEndCall();
+        } else if (signal.type === 'peer-ready' && isInitiator) {
+          await createAndSendOffer();
         }
       } catch (signalErr) {
         console.error('Erreur traitement signal WebRTC :', signalErr);
+      }
+    }, () => {
+      if (!isInitiator) {
+        if (readyRetryTimer) clearInterval(readyRetryTimer);
+        void sendPeerReady();
+        readyRetryTimer = setInterval(() => {
+          void sendPeerReady();
+        }, 1000);
       }
     });
 
@@ -345,6 +504,7 @@ export function ActiveCallRoom({
       isMounted = false;
       soundManager.stop();
       unsubscribeSignals();
+      if (readyRetryTimer) clearInterval(readyRetryTimer);
       if (localStreamRef.current) {
         localStreamRef.current.getTracks().forEach((t) => t.stop());
         localStreamRef.current = null;
@@ -363,7 +523,7 @@ export function ActiveCallRoom({
       setRemoteAudioStream(null);
       pc.close();
     };
-  }, [callerEmail, receiverEmail, isInitiator, callType, ambience, onEndCall]);
+  }, [callerEmail, receiverEmail, callId, isInitiator, callType, ambience, onEndCall]);
 
   useEffect(() => {
     if (activeTab !== 'video') return;
@@ -400,6 +560,7 @@ export function ActiveCallRoom({
         type: 'call-ended',
         sender: callerEmail,
         target: receiverEmail,
+        callId,
       });
     } catch {}
 
@@ -490,14 +651,6 @@ export function ActiveCallRoom({
           <span className="px-3 py-1 rounded-full text-xs font-semibold bg-emerald-950 text-emerald-400 border border-emerald-800 animate-pulse">
             🔴 Session Active
           </span>
-          <button
-            type="button"
-            onClick={handleHangup}
-            className="px-3.5 py-1.5 rounded-xl bg-red-600 hover:bg-red-500 text-white font-bold text-xs shadow-lg transition-all flex items-center gap-1.5 cursor-pointer ml-1"
-          >
-            <span>🔴</span>
-            <span>Raccrocher</span>
-          </button>
         </div>
       </div>
 
@@ -528,12 +681,13 @@ export function ActiveCallRoom({
         )}
 
         <button
-          onClick={() => setActiveTab('whiteboard')}
+          onClick={handleOpenWhiteboard}
+          disabled={outgoingWhiteboardRequestId !== null}
           className={`px-4 py-2 rounded-xl font-semibold transition-all ${
             activeTab === 'whiteboard'
               ? 'bg-indigo-600 text-white shadow-md'
               : 'bg-slate-900 text-slate-400 hover:bg-slate-800'
-          }`}
+          } disabled:cursor-wait disabled:opacity-60`}
         >
           🎨 Tableau partagé
         </button>
@@ -549,6 +703,43 @@ export function ActiveCallRoom({
           📁 Fichiers partagés
         </button>
       </div>
+
+      {incomingWhiteboardRequest && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-indigo-800/70 bg-indigo-950/40 px-4 py-3" role="status">
+          <p className="text-sm text-slate-200">
+            {incomingWhiteboardRequest.senderEmail} vous propose d&apos;ouvrir le tableau partagé.
+          </p>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => void respondToWhiteboardRequest(true)}
+              className="rounded-md bg-indigo-600 px-3 py-2 text-xs font-semibold text-white hover:bg-indigo-500"
+            >
+              Accepter
+            </button>
+            <button
+              type="button"
+              onClick={() => void respondToWhiteboardRequest(false)}
+              className="rounded-md border border-slate-600 px-3 py-2 text-xs font-semibold text-slate-200 hover:bg-slate-800"
+            >
+              Refuser
+            </button>
+          </div>
+        </div>
+      )}
+
+      {outgoingWhiteboardRequestId && (
+        <p className="text-xs text-slate-400" role="status">
+          Demande envoyée à votre correspondant, en attente de sa réponse.
+        </p>
+      )}
+      {whiteboardRequestStatus && !outgoingWhiteboardRequestId && (
+        <p className="text-xs text-slate-400" role="status">
+          {whiteboardRequestStatus === 'accepted' && 'Votre correspondant a accepté la demande d’ouverture du tableau.'}
+          {whiteboardRequestStatus === 'declined' && 'Votre correspondant a refusé l’ouverture du tableau.'}
+          {whiteboardRequestStatus === 'unavailable' && 'La demande n’a pas pu être transmise. Vérifiez la connexion puis réessayez.'}
+        </p>
+      )}
 
       {/* Vue 1 : Grille des Caméras */}
       {activeTab === 'video' && (
@@ -643,10 +834,14 @@ export function ActiveCallRoom({
       )}
 
       {/* Vue 3 : Tableau partagé synchrone */}
-      {activeTab === 'whiteboard' && <Whiteboard roomId={roomId} />}
+      <div className={activeTab === 'whiteboard' ? 'block' : 'hidden'} aria-hidden={activeTab !== 'whiteboard'}>
+        <Whiteboard roomId={roomId} />
+      </div>
 
       {/* Vue 4 : Partage de fichiers & images */}
-      {activeTab === 'files' && <FileShare />}
+      {activeTab === 'files' && (
+        <FileShare roomId={roomId} receiverEmail={receiverEmail} />
+      )}
 
       {/* Barre de contrôle ergonomique sticky */}
       <div className="sticky bottom-0 bg-slate-950/95 backdrop-blur-md py-3 px-4 rounded-2xl border border-slate-800 shadow-2xl flex flex-wrap items-center justify-center gap-3 z-30">

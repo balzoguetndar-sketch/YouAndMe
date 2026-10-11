@@ -1,7 +1,7 @@
 'use client';
 
-import { useState } from 'react';
-import { activateLicenseKey, UserUsageInfo } from '@/src/lib/usage';
+import { useState, useEffect } from 'react';
+import { activateLicenseKey, getUserUsage, UserUsageInfo } from '@/src/lib/usage';
 import { PricingPlans } from '@/src/components/subscription/PricingPlans';
 
 interface UsageLimitModalProps {
@@ -17,7 +17,51 @@ export function UsageLimitModal({
 }: UsageLimitModalProps) {
   const [licenseKey, setLicenseKey] = useState('');
   const [loading, setLoading] = useState(false);
+  const [checkingUnlock, setCheckingUnlock] = useState(false);
   const [statusMessage, setStatusMessage] = useState<{ type: 'error' | 'success'; text: string } | null>(null);
+
+  // Vérification automatique en arrière-plan toutes les 2 secondes (Déblocage Admin / Achat)
+  useEffect(() => {
+    let active = true;
+
+    const checkQuotaStatus = async () => {
+      try {
+        const freshUsage = await getUserUsage(userUsage.email);
+        if (active && (!freshUsage.isLocked || freshUsage.hasLicense)) {
+          onLicenseActivated();
+        }
+      } catch {
+        // Ignorer silencieusement les erreurs réseau réseau temporaires
+      }
+    };
+
+    const interval = setInterval(checkQuotaStatus, 2000);
+    return () => {
+      active = false;
+      clearInterval(interval);
+    };
+  }, [userUsage.email, onLicenseActivated]);
+
+  // Vérification manuelle au clic sur le bouton
+  const handleManualCheck = async () => {
+    setCheckingUnlock(true);
+    setStatusMessage(null);
+    try {
+      const freshUsage = await getUserUsage(userUsage.email);
+      if (!freshUsage.isLocked || freshUsage.hasLicense) {
+        setStatusMessage({ type: 'success', text: '✅ Quota débloqué ! Chargement en cours...' });
+        setTimeout(() => {
+          onLicenseActivated();
+        }, 1000);
+      } else {
+        setStatusMessage({ type: 'error', text: 'Le quota est toujours épuisé. Contactez l’administrateur ou choisissez une formule.' });
+      }
+    } catch {
+      setStatusMessage({ type: 'error', text: 'Impossible de vérifier le statut pour le moment.' });
+    } finally {
+      setCheckingUnlock(false);
+    }
+  };
 
   const handleActivateKey = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -51,6 +95,18 @@ export function UsageLimitModal({
           <p className="text-xs sm:text-sm text-slate-300">
             Vous avez utilisé {userUsage.usageCount} appel{userUsage.usageCount > 1 ? 's' : ''} gratuit{userUsage.usageCount > 1 ? 's' : ''}. Choisissez une formule pour continuer.
           </p>
+          
+          {/* Bouton de vérification manuelle pour éviter tout rafraîchissement F5 */}
+          <div className="pt-2">
+            <button
+              type="button"
+              onClick={handleManualCheck}
+              disabled={checkingUnlock}
+              className="px-4 py-2 rounded-xl bg-indigo-600/80 hover:bg-indigo-500 text-xs font-bold text-white transition-all shadow-md cursor-pointer disabled:opacity-50"
+            >
+              {checkingUnlock ? '🔄 Vérification...' : '🔄 Vérifier mon déblocage admin'}
+            </button>
+          </div>
         </div>
 
         <PricingPlans compact />
