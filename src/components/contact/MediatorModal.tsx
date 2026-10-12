@@ -1,17 +1,26 @@
 'use client';
 
 import { useState } from 'react';
+import type { LicenseTier } from '@/src/lib/license';
 
 interface MediatorModalProps {
   userEmail: string;
+  licenseTier?: LicenseTier | null;
   planType?: string | null;
   onClose: () => void;
 }
 
-export function MediatorModal({ userEmail, planType, onClose }: MediatorModalProps) {
+export function MediatorModal({ userEmail, licenseTier, planType, onClose }: MediatorModalProps) {
   const [message, setMessage] = useState('');
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const resolvedTier = licenseTier ?? (
+    planType === '7euro' ? 'ad_supported'
+      : planType === '12euro' ? 'no_ads'
+        : planType === '50euro' ? 'supporter'
+          : planType === 'free' ? 'free'
+            : null
+  );
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -26,7 +35,8 @@ export function MediatorModal({ userEmail, planType, onClose }: MediatorModalPro
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           userEmail,
-          planType: planType || 'free',
+          licenseTier: resolvedTier,
+          planType,
           message,
           submittedAt: new Date().toISOString(),
         }),
@@ -57,10 +67,12 @@ export function MediatorModal({ userEmail, planType, onClose }: MediatorModalPro
   };
 
   const getPlanLabel = () => {
-    if (planType === '7euro') return '⭐ 7 € / an (Annuelle avec pub)';
-    if (planType === '12euro') return '💎 12 € / an (Annuelle sans pub)';
-    if (planType === '50euro') return '👑 50 € + (À vie VIP)';
-    return '🌱 Formule Gratuite';
+    if (resolvedTier === 'ad_supported') return '⭐ 7 € / an (Annuelle avec pub)';
+    if (resolvedTier === 'no_ads') return '💎 12 € / an (Annuelle sans pub)';
+    if (resolvedTier === 'supporter') return '👑 Soutien à vie (sans pub)';
+    if (resolvedTier === 'legacy') return 'Licence active (formule historique)';
+    if (resolvedTier === 'free') return '🌱 Formule Gratuite';
+    return 'Vérification de la formule…';
   };
 
   return (
@@ -119,7 +131,7 @@ export function MediatorModal({ userEmail, planType, onClose }: MediatorModalPro
             </button>
             <button
               type="submit"
-              disabled={loading || !message.trim()}
+              disabled={loading || !message.trim() || !resolvedTier}
               className="px-5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-xs font-bold text-white transition-all shadow-md cursor-pointer disabled:opacity-50"
             >
               {loading ? 'Transmissions…' : '✉️ Transmettre au Médiateur'}

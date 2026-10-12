@@ -23,11 +23,11 @@ import { ContactList } from '@/src/components/contact/ContactList';
 import { useHeaderActions } from '@/src/components/layout/HeaderActionsContext';
 import { ADMIN_EMAIL } from '@/src/lib/validation';
 import { MediatorModal } from '@/src/components/contact/MediatorModal';
+import { OfflineMessageModal } from '@/src/components/contact/OfflineMessageModal';
 
 type Ambience = 'neutral' | 'love' | 'family' | 'couple' | 'friendship';
 type CallType = 'video' | 'audio';
 
-// Interface étendue pour inclure hideAds et planType sans erreur TypeScript
 type ExtendedUserUsage = UserUsageInfo & {
   hideAds?: boolean;
   planType?: string | null;
@@ -67,7 +67,7 @@ export default function HomePage() {
     callId: string;
   } | null>(null);
 
-  // Section Test Local
+  const [showOfflineModal, setShowOfflineModal] = useState(false);
   const [showLocalTest, setShowLocalTest] = useState(false);
 
   const supabase = createClient();
@@ -105,8 +105,8 @@ export default function HomePage() {
         if (response.status === 401 || response.status === 409) {
           try {
             await supabase.auth.signOut({ scope: 'local' });
-          } catch {}
-          await fetch('/api/auth/admin/logout', { method: 'POST' }).catch(() => {});
+          } catch { }
+          await fetch('/api/auth/admin/logout', { method: 'POST' }).catch(() => { });
           sessionStorage.removeItem('yam_user_email');
           sessionStorage.removeItem('yam_session_active');
           router.replace('/login');
@@ -154,7 +154,7 @@ export default function HomePage() {
       }
 
       setLoading(false);
-      logUserConnection(formattedEmail).catch(() => {});
+      logUserConnection(formattedEmail).catch(() => { });
     };
 
     initAuth();
@@ -182,7 +182,7 @@ export default function HomePage() {
               setShowUsageModal(false);
               setUsageError(null);
             }
-          } catch {}
+          } catch { }
         }
       )
       .subscribe();
@@ -192,7 +192,7 @@ export default function HomePage() {
     };
   }, [currentUserEmail, supabase]);
 
-  // 4. Actions complémentaires dans l'en-tête (Badge géré dynamiquement par HeaderNav.tsx)
+  // 4. Actions complémentaires dans l'en-tête
   useEffect(() => {
     if (!currentUserEmail) {
       setHeaderActions(null);
@@ -205,21 +205,19 @@ export default function HomePage() {
           <span role="alert" className="text-xs font-semibold text-red-300">
             Erreur quota : {usageError}
           </span>
-        ) : !userUsage?.hasLicense ? (
-          !userUsage ? (
-            <span role="status" className="text-xs font-semibold text-slate-400">
-              Vérification du quota…
+        ) : !userUsage ? (
+          <span role="status" className="text-xs font-semibold text-slate-400">
+            Vérification du quota…
+          </span>
+        ) : userUsage.hasLicense ? null : (
+          <div className="flex items-center gap-2 rounded-xl border border-slate-800 bg-slate-950/80 px-2 py-1.5 sm:px-3">
+            <span className="text-xs font-semibold text-slate-300">
+              🎯 <strong className={userUsage.remaining <= 2 ? 'text-red-400' : 'text-indigo-400'}>
+                {userUsage.remaining} / 10
+              </strong> gratuits restants
             </span>
-          ) : (
-            <div className="flex items-center gap-2 rounded-xl border border-slate-800 bg-slate-950/80 px-2 py-1.5 sm:px-3">
-              <span className="text-xs font-semibold text-slate-300">
-                🎯 <strong className={userUsage.remaining <= 2 ? 'text-red-400' : 'text-indigo-400'}>
-                  {userUsage.remaining} / 10
-                </strong> gratuits restants
-              </span>
-            </div>
-          )
-        ) : null}
+          </div>
+        )}
 
         {isAdminUser && (
           <button
@@ -275,17 +273,11 @@ export default function HomePage() {
         if (signal.callId !== activeCallIdRef.current) return;
         soundManager.stop();
         alert(`${targetEmail || 'Votre interlocuteur'} a décliné l'appel.`);
-        setIsInCall(false);
-        activeCallIdRef.current = null;
-        setActiveCallId(null);
+        window.location.reload();
       } else if (signal.type === 'call-ended') {
         if (signal.callId !== activeCallIdRef.current && signal.callId !== incomingCallIdRef.current) return;
         soundManager.stop();
-        setIsInCall(false);
-        setIncomingCall(null);
-        activeCallIdRef.current = null;
-        incomingCallIdRef.current = null;
-        setActiveCallId(null);
+        window.location.reload();
       }
     });
 
@@ -454,19 +446,17 @@ export default function HomePage() {
           isInitiator={isInitiator}
           callType={callType}
           ambience={ambience}
-          onEndCall={() => {
+          onEndCall={async () => {
             soundManager.stop();
             if (currentUserEmail && cleanTargetEmail) {
-              sendSignal(cleanTargetEmail, {
+              await sendSignal(cleanTargetEmail, {
                 type: 'call-ended',
                 sender: currentUserEmail,
                 target: cleanTargetEmail,
                 callId: activeCallId || undefined,
-              }).catch(() => {});
+              }).catch(() => { });
             }
-            activeCallIdRef.current = null;
-            setActiveCallId(null);
-            setIsInCall(false);
+            window.location.reload();
           }}
         />
       </main>
@@ -499,8 +489,8 @@ export default function HomePage() {
         />
       )}
 
-      {/* Encadré d'appel au soutien */}
-      {!userUsage?.hideAds && (
+      {/* Point 3 : Bandeau de soutien visible UNIQUEMENT pour quota gratuit (masqué si licence payante) */}
+      {!userUsage?.hasLicense && (
         <div className="w-full bg-gradient-to-r from-indigo-950 via-purple-950 to-indigo-950 border-b border-indigo-500/40 py-2.5 px-4 shadow-lg">
           <div className="max-w-4xl mx-auto flex flex-wrap items-center justify-between gap-3 text-xs sm:text-sm">
             <div className="flex items-center gap-2 text-indigo-200 font-medium">
@@ -511,14 +501,14 @@ export default function HomePage() {
               onClick={() => setShowPricing(!showPricing)}
               className="px-3.5 py-1.5 rounded-full bg-indigo-600 hover:bg-indigo-500 font-bold text-xs text-white shadow-md transition-all cursor-pointer"
             >
-              {showPricing ? '✕ Fermer les tarifs' : '💎 7 € avec pub, 12 € sans pub, soutien sans pub 50 € +'}
+              {showPricing ? '✕ Fermer les tarifs' : '7€ avec pub, sans pub : 12€ ou 50€ +'}
             </button>
           </div>
         </div>
       )}
 
-      {/* Bannière de pub */}
-      {!userUsage?.hideAds && (
+      {/* Le carrousel suit les droits publicitaires de la formule active. */}
+      {currentUserEmail && userUsage?.advertisingEnabled && (
         <div className="w-full bg-slate-900/60 border-b border-slate-800/80 py-3 px-4">
           <div className="max-w-4xl mx-auto">
             <BannerCarousel />
@@ -590,16 +580,14 @@ export default function HomePage() {
               {isValidTargetEmail && (
                 <div className="absolute right-3 top-2.5">
                   <span
-                    className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold border ${
-                      isPeerOnline
+                    className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold border ${isPeerOnline
                         ? 'bg-emerald-950 text-emerald-300 border-emerald-800'
                         : 'bg-amber-950 text-amber-300 border-amber-800'
-                    }`}
+                      }`}
                   >
                     <span
-                      className={`w-2 h-2 rounded-full ${
-                        isPeerOnline ? 'bg-emerald-400 animate-ping' : 'bg-amber-400'
-                      }`}
+                      className={`w-2 h-2 rounded-full ${isPeerOnline ? 'bg-emerald-400 animate-ping' : 'bg-amber-400'
+                        }`}
                     />
                     {isPeerOnline ? 'En ligne' : 'Hors ligne'}
                   </span>
@@ -614,6 +602,43 @@ export default function HomePage() {
             </div>
           )}
 
+          {/* === HORS LIGNE : options de contact différé === */}
+          {isValidTargetEmail && !isPeerOnline && (
+            <div className="space-y-4 pt-4 border-t border-slate-800 animate-in fade-in">
+              <div className="p-5 bg-slate-800/40 border border-slate-700 rounded-2xl space-y-4">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400">
+                    📪 Interlocuteur hors ligne
+                  </h3>
+                  <span className="text-[11px] text-slate-500">Laisser un message</span>
+                </div>
+                <p className="text-xs text-slate-400">
+                  Votre correspondant n&apos;est pas connecté en ce moment. Vous pouvez lui laisser un message écrit par e-mail, ou enregistrer un message audio (bientôt disponible).
+                </p>
+                <div className="grid grid-cols-2 gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setShowOfflineModal(true)}
+                    className="flex items-center justify-center gap-2 py-3 px-4 rounded-xl bg-slate-700 hover:bg-slate-600 border border-slate-600 text-xs font-bold text-slate-200 transition-all"
+                    title="Écrire un message via You&Me"
+                  >
+                    ✍️ Message Écrit
+                  </button>
+                  <button
+                    type="button"
+                    disabled
+                    className="flex items-center justify-center gap-2 py-3 px-4 rounded-xl bg-slate-800 border border-slate-700 text-xs font-bold text-slate-600 cursor-not-allowed"
+                    title="Message audio — bientôt disponible"
+                  >
+                    🎵 Message Audio
+                    <span className="text-[9px] font-normal text-slate-700 ml-1">bientôt</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* === EN LIGNE : appel direct en temps réel === */}
           {isValidTargetEmail && isPeerOnline && (
             <div className="space-y-6 pt-4 border-t border-slate-800 animate-in fade-in">
               <div className="p-5 bg-emerald-950/30 border border-emerald-800/60 rounded-2xl space-y-5">
@@ -628,22 +653,20 @@ export default function HomePage() {
                   <button
                     type="button"
                     onClick={() => setCallType('video')}
-                    className={`py-3 px-4 rounded-xl text-xs font-bold border transition-all ${
-                      callType === 'video'
+                    className={`py-3 px-4 rounded-xl text-xs font-bold border transition-all ${callType === 'video'
                         ? 'bg-indigo-600 border-indigo-500 text-white shadow-lg'
                         : 'bg-slate-950 border-slate-800 text-slate-400 hover:bg-slate-800'
-                    }`}
+                      }`}
                   >
                     📹 Appel Vidéo
                   </button>
                   <button
                     type="button"
                     onClick={() => setCallType('audio')}
-                    className={`py-3 px-4 rounded-xl text-xs font-bold border transition-all ${
-                      callType === 'audio'
+                    className={`py-3 px-4 rounded-xl text-xs font-bold border transition-all ${callType === 'audio'
                         ? 'bg-indigo-600 border-indigo-500 text-white shadow-lg'
                         : 'bg-slate-950 border-slate-800 text-slate-400 hover:bg-slate-800'
-                    }`}
+                      }`}
                   >
                     🎙️ Appel Audio seul
                   </button>
@@ -665,11 +688,10 @@ export default function HomePage() {
                         key={item.id}
                         type="button"
                         onClick={() => setAmbience(item.id as Ambience)}
-                        className={`py-2.5 px-3 rounded-xl border text-xs font-semibold transition-all ${
-                          ambience === item.id
+                        className={`py-2.5 px-3 rounded-xl border text-xs font-semibold transition-all ${ambience === item.id
                             ? 'bg-indigo-950 border-indigo-500 text-indigo-200 font-bold shadow'
                             : 'bg-slate-950 border-slate-800 text-slate-400 hover:bg-slate-800'
-                        }`}
+                          }`}
                       >
                         {item.label}
                       </button>
@@ -689,6 +711,14 @@ export default function HomePage() {
         </div>
       </div>
 
+      {showOfflineModal && currentUserEmail && isValidTargetEmail && (
+        <OfflineMessageModal
+          senderEmail={currentUserEmail}
+          recipientEmail={cleanTargetEmail}
+          onClose={() => setShowOfflineModal(false)}
+        />
+      )}
+
       {/* Pied de page avec lien pour saisir le médiateur */}
       <footer className="mt-8 text-center border-t border-slate-800/80 pt-6 pb-2 px-4">
         <button
@@ -701,7 +731,7 @@ export default function HomePage() {
         {showMediatorModal && currentUserEmail && (
           <MediatorModal
             userEmail={currentUserEmail}
-            planType={userUsage?.planType}
+            licenseTier={userUsage?.licenseTier ?? null}
             onClose={() => setShowMediatorModal(false)}
           />
         )}

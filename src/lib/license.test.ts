@@ -72,6 +72,32 @@ test('the supporter plan is permanent and has no advertising', () => {
   assert.equal(access.isExpired, false);
 });
 
+test('a no-ads tier stays ad-free if its stored advertising flag is inconsistent', () => {
+  const future = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+  const access = getLicenseAccess(storedLicense({
+    license_tier: 'no_ads',
+    license_status: 'active',
+    licensed_until: future,
+    quota_unlimited: true,
+    advertising_enabled: true,
+  }));
+
+  assert.equal(access.advertisingEnabled, false);
+});
+
+test('a supporter tier stays ad-free if its stored advertising flag is inconsistent', () => {
+  const access = getLicenseAccess(storedLicense({
+    license_tier: 'supporter',
+    license_status: 'active',
+    quota_unlimited: true,
+    advertising_enabled: true,
+  }));
+
+  assert.equal(access.hasLicense, true);
+  assert.equal(access.quotaUnlimited, true);
+  assert.equal(access.advertisingEnabled, false);
+});
+
 test('an expired annual license is inactive', () => {
   const past = new Date(Date.now() - 60 * 60 * 1000).toISOString();
   assert.equal(isAnnualLicenseActive(storedLicense({

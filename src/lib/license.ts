@@ -68,7 +68,8 @@ export function getLicenseAccess(license: StoredLicense): LicenseAccess {
   const hasLicense = license.license_status === 'active' &&
     (isSupporter || isAnnual || license.license_tier === 'legacy');
   const advertisingEnabled = license.license_tier === 'free' ||
-    (hasLicense && license.advertising_enabled);
+    (hasLicense && (license.license_tier === 'ad_supported' ||
+      (license.license_tier === 'legacy' && license.advertising_enabled)));
 
   return {
     hasLicense,

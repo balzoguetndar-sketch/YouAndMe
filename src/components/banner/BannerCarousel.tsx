@@ -72,7 +72,7 @@ export function BannerCarousel() {
           src={current.image_url}
           alt={current.title}
           fill
-          loading={currentIndex === 0 ? 'eager' : 'lazy'}
+          loading="eager"
           unoptimized
           className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
         />

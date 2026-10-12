@@ -7,7 +7,7 @@ const resend = new Resend(process.env.RESEND_API_KEY);
 export async function POST(req: Request) {
   try {
     const body = await req.json();
-    const { userEmail, planType, message, submittedAt } = body;
+    const { userEmail, licenseTier, planType, message, submittedAt } = body;
 
     const emailCheck = validateEmail(userEmail);
     if (!emailCheck.isValid) {
@@ -27,13 +27,24 @@ export async function POST(req: Request) {
       timeStyle: 'medium',
     });
 
-    const planLabel =
-      planType === '7euro'
-        ? '7 € / an (Annuelle avec pub)'
+    const resolvedTier = ['ad_supported', 'no_ads', 'supporter', 'free', 'legacy'].includes(licenseTier)
+      ? licenseTier
+      : planType === '7euro'
+        ? 'ad_supported'
         : planType === '12euro'
+          ? 'no_ads'
+          : planType === '50euro'
+            ? 'supporter'
+            : 'free';
+    const planLabel =
+      resolvedTier === 'ad_supported'
+        ? '7 € / an (Annuelle avec pub)'
+        : resolvedTier === 'no_ads'
         ? '12 € / an (Annuelle sans pub)'
-        : planType === '50euro'
+        : resolvedTier === 'supporter'
         ? '50 € + (Soutien / À vie VIP)'
+        : resolvedTier === 'legacy'
+        ? 'Licence active (formule historique)'
         : 'Formule Gratuite (Quota 10 appels)';
 
     // Envoi de l'e-mail à l'administrateur avec Resend

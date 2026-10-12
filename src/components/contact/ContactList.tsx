@@ -2,6 +2,7 @@
 
 import { FormEvent, useEffect, useState } from 'react';
 import type { Contact } from '@/src/lib/contacts';
+import { OfflineMessageModal } from '@/src/components/contact/OfflineMessageModal';
 
 type ContactListProps = {
   currentUserEmail: string;
@@ -15,6 +16,8 @@ export function ContactList({ currentUserEmail, onlineUsers, onSelectContact }: 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Email du contact pour lequel le modal de message est ouvert
+  const [messageTarget, setMessageTarget] = useState<string | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -155,28 +158,59 @@ export function ContactList({ currentUserEmail, onlineUsers, onSelectContact }: 
                 </div>
 
                 <div className="flex shrink-0 items-center gap-1">
-                  <button
-                    type="button"
-                    onClick={() => onSelectContact(contact.contact_email, 'video')}
-                    disabled={!isOnline}
-                    className="whitespace-nowrap rounded-lg bg-emerald-600 px-2 py-2 text-[10px] font-bold text-white hover:bg-emerald-500 disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-500 sm:text-xs"
-                    title={isOnline ? 'Démarrer un appel vidéo' : 'Le correspondant est hors ligne'}
-                  >
-                    📹 <span className="max-[420px]:sr-only">Vidéo</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => onSelectContact(contact.contact_email, 'audio')}
-                    disabled={!isOnline}
-                    className="whitespace-nowrap rounded-lg bg-indigo-600 px-2 py-2 text-[10px] font-bold text-white hover:bg-indigo-500 disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-500 sm:text-xs"
-                    title={isOnline ? 'Démarrer un appel audio' : 'Le correspondant est hors ligne'}
-                  >
-                    🎙️ <span className="max-[420px]:sr-only">Audio</span>
-                  </button>
+                  {isOnline ? (
+                    <>
+                      {/* Contact EN LIGNE : appels directs disponibles */}
+                      <button
+                        type="button"
+                        onClick={() => onSelectContact(contact.contact_email, 'video')}
+                        className="whitespace-nowrap rounded-lg bg-emerald-600 px-2 py-2 text-[10px] font-bold text-white hover:bg-emerald-500 transition-colors sm:text-xs"
+                        title="Démarrer un appel vidéo"
+                      >
+                        📹 <span className="max-[420px]:sr-only">Vidéo</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => onSelectContact(contact.contact_email, 'audio')}
+                        className="whitespace-nowrap rounded-lg bg-indigo-600 px-2 py-2 text-[10px] font-bold text-white hover:bg-indigo-500 transition-colors sm:text-xs"
+                        title="Démarrer un appel audio"
+                      >
+                        🎙️ <span className="max-[420px]:sr-only">Audio</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setMessageTarget(contact.contact_email)}
+                        className="whitespace-nowrap rounded-lg bg-slate-700 px-2 py-2 text-[10px] font-bold text-slate-200 hover:bg-slate-600 transition-colors sm:text-xs"
+                        title="Envoyer un message audio ou écrit"
+                      >
+                        🎙️ <span className="max-[420px]:sr-only">Message</span>
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      {/* Contact HORS LIGNE : messages différés */}
+                      <button
+                        type="button"
+                        onClick={() => setMessageTarget(contact.contact_email)}
+                        className="whitespace-nowrap rounded-lg bg-slate-700 px-2 py-2 text-[10px] font-bold text-slate-200 hover:bg-slate-600 transition-colors sm:text-xs"
+                        title="Envoyer un message écrit"
+                      >
+                        ✍️ <span className="max-[420px]:sr-only">Message</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setMessageTarget(contact.contact_email)}
+                        className="whitespace-nowrap rounded-lg bg-indigo-700 px-2 py-2 text-[10px] font-bold text-white hover:bg-indigo-600 transition-colors sm:text-xs"
+                        title="Enregistrer et envoyer un message audio"
+                      >
+                        🎙️ <span className="max-[420px]:sr-only">Msg. Audio</span>
+                      </button>
+                    </>
+                  )}
                   <button
                     type="button"
                     onClick={() => void handleRemove(contact.id)}
-                    className="whitespace-nowrap rounded-lg border border-slate-700 px-2 py-2 text-[10px] text-slate-400 hover:border-red-700 hover:text-red-300 sm:text-xs"
+                    className="whitespace-nowrap rounded-lg border border-slate-700 px-2 py-2 text-[10px] text-slate-400 hover:border-red-700 hover:text-red-300 transition-colors sm:text-xs"
                     aria-label={`Supprimer ${contact.contact_email}`}
                     title="Supprimer ce contact"
                   >
@@ -192,6 +226,15 @@ export function ContactList({ currentUserEmail, onlineUsers, onSelectContact }: 
 
       {currentUserEmail && (
         <p className="text-[11px] text-slate-600">Votre compte : {currentUserEmail}</p>
+      )}
+
+      {/* Modal de message pour contact hors ligne */}
+      {messageTarget && currentUserEmail && (
+        <OfflineMessageModal
+          senderEmail={currentUserEmail}
+          recipientEmail={messageTarget}
+          onClose={() => setMessageTarget(null)}
+        />
       )}
     </section>
   );

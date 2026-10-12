@@ -566,9 +566,11 @@ export function ActiveCallRoom({
 
     if (localStreamRef.current) {
       localStreamRef.current.getTracks().forEach((track) => track.stop());
+      localStreamRef.current = null;
     }
     if (pcRef.current) {
       pcRef.current.close();
+      pcRef.current = null;
     }
     onEndCall();
   };

@@ -8,7 +8,7 @@ import { getLicenseAccess, type LicenseTier, type StoredLicense } from '@/src/li
 import { ADMIN_EMAIL, validateEmail } from '@/src/lib/validation';
 
 const MAX_FREE_USAGES = 10;
-const USAGE_COLUMNS = 'email, usage_count, has_license, license_key, license_tier, license_status, licensed_until, quota_unlimited, advertising_enabled';
+const USAGE_COLUMNS = 'email, usage_count, has_license, license_key, license_tier, license_status, licensed_until, expires_at, plan_type, quota_unlimited, advertising_enabled';
 const MASTER_LICENSE_KEYS = new Set([
   'YAM-LIFE-2026-VIP',
   'YAM-PRO-2026-LIFE',
@@ -23,6 +23,8 @@ type UsageRecord = {
   license_tier: string | null;
   license_status: string | null;
   licensed_until: string | null;
+  expires_at: string | null;
+  plan_type: string | null;
   quota_unlimited: boolean | null;
   advertising_enabled: boolean | null;
 };
@@ -90,19 +92,26 @@ function getUsageInfo(email: string, row: UsageRecord | null) {
 
   const normalizedKey = row?.license_key?.trim().toUpperCase();
   const storedTier = row?.license_tier;
+  const legacyPlanTier: LicenseTier | null = row?.plan_type === '7euro'
+    ? 'ad_supported'
+    : row?.plan_type === '12euro'
+      ? 'no_ads'
+      : row?.plan_type === '50euro'
+        ? 'supporter'
+        : null;
   const tier: LicenseTier = storedTier === 'ad_supported' || storedTier === 'no_ads' || storedTier === 'supporter'
     ? storedTier
     : row?.has_license
       ? normalizedKey && (MASTER_LICENSE_KEYS.has(normalizedKey) || normalizedKey === 'STRIPE-SUPPORTER' || normalizedKey.startsWith('MANUAL-SUPPORTER:'))
         ? 'supporter'
-        : 'legacy'
+        : legacyPlanTier || 'legacy'
       : 'free';
   const license: StoredLicense = {
     license_tier: tier,
     license_status: row?.license_status === 'active' || (Boolean(row?.has_license) && !row?.license_status)
       ? 'active'
       : 'inactive',
-    licensed_until: row?.licensed_until || null,
+    licensed_until: row?.licensed_until || row?.expires_at || null,
     quota_unlimited: row?.quota_unlimited ?? Boolean(row?.has_license),
     advertising_enabled: row?.advertising_enabled ?? (tier === 'free' || tier === 'ad_supported'),
   };

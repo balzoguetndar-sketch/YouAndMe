@@ -10,6 +10,7 @@ import { useHeaderActions } from '@/src/components/layout/HeaderActionsContext';
 
 type UserLicenseInfo = {
   has_license?: boolean;
+  license_tier?: string | null;
   plan_type?: string | null;
   license_key?: string | null;
 };
@@ -61,7 +62,7 @@ export function HeaderNav() {
     const fetchLicense = async () => {
       const { data } = await supabase
         .from('user_usage')
-        .select('has_license, plan_type, license_key')
+        .select('has_license, license_tier, plan_type, license_key')
         .eq('email', email.trim().toLowerCase())
         .maybeSingle();
 
@@ -127,9 +128,9 @@ export function HeaderNav() {
       return null;
     }
 
-    const { plan_type, license_key } = licenseInfo;
+    const { license_tier, plan_type, license_key } = licenseInfo;
 
-    if (plan_type === '7euro') {
+    if (license_tier === 'ad_supported' || (!license_tier || license_tier === 'legacy') && plan_type === '7euro') {
       return (
         <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-amber-950 text-amber-300 border border-amber-800">
           ⭐ Licence Annuelle (avec pub)
@@ -137,7 +138,7 @@ export function HeaderNav() {
       );
     }
 
-    if (plan_type === '12euro') {
+    if (license_tier === 'no_ads' || (!license_tier || license_tier === 'legacy') && plan_type === '12euro') {
       return (
         <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-indigo-950 text-indigo-300 border border-indigo-800">
           💎 Licence Annuelle (sans pub)
@@ -145,10 +146,10 @@ export function HeaderNav() {
       );
     }
 
-    if (plan_type === '50euro' || license_key?.includes('supporter')) {
+    if (license_tier === 'supporter' || (!license_tier || license_tier === 'legacy') && (plan_type === '50euro' || license_key?.toLowerCase().includes('supporter'))) {
       return (
         <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-purple-950 text-purple-300 border border-purple-800">
-          👑 Licence à Vie VIP
+          👑 Licence à Vie VIP (sans pub)
         </span>
       );
     }

@@ -22,6 +22,8 @@ export function CallLauncher() {
   const [isCalling, setIsCalling] = useState(false);
   const [isInitiator, setIsInitiator] = useState(true);
   const [activeCallId, setActiveCallId] = useState<string | null>(null);
+  // Clé de session : incrémentée après chaque appel pour forcer le remount complet d'ActiveCallRoom
+  const [callSessionKey, setCallSessionKey] = useState(0);
   const activeCallIdRef = useRef<string | null>(null);
   const incomingCallIdRef = useRef<string | null>(null);
   const handledCallRequestIdsRef = useRef(new Set<string>());
@@ -123,7 +125,9 @@ export function CallLauncher() {
         setIncomingCall(null);
         activeCallIdRef.current = null;
         incomingCallIdRef.current = null;
+        handledCallRequestIdsRef.current.clear();
         setActiveCallId(null);
+        setCallSessionKey((prev) => prev + 1);
       }
     });
 
@@ -232,13 +236,18 @@ export function CallLauncher() {
     soundManager.stop();
     setInCall(false);
     setIsCalling(false);
+    setIncomingCall(null);
     activeCallIdRef.current = null;
+    incomingCallIdRef.current = null;
+    handledCallRequestIdsRef.current.clear();
     setActiveCallId(null);
+    setCallSessionKey((prev) => prev + 1);
   }, []);
 
   if (inCall && myEmail && cleanPeer) {
     return (
       <ActiveCallRoom
+        key={callSessionKey}
         callerEmail={myEmail}
         receiverEmail={cleanPeer}
         callId={activeCallId || ''}
