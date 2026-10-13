@@ -1,5 +1,6 @@
 'use client';
 
+import Image from 'next/image';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createClient } from '@/src/lib/supabase/clients';
 import type { RealtimeChannel } from '@supabase/supabase-js';
@@ -20,6 +21,14 @@ type SharedFile = {
   contentType: string;
   createdAt: string;
   url: string;
+  downloadUrl?: string;
+};
+
+type PendingFile = {
+  id: string;
+  file: File;
+  previewUrl: string | null;
+  needsCompression: boolean;
 };
 
 async function compressImage(file: File) {
@@ -64,9 +73,27 @@ export function FileShare({ roomId, receiverEmail }: FileShareProps) {
   const [files, setFiles] = useState<SharedFile[]>([]);
   const [uploading, setUploading] = useState(false);
   const [channelReady, setChannelReady] = useState(false);
-  const [pendingImages, setPendingImages] = useState<File[]>([]);
+  const [pendingFiles, setPendingFiles] = useState<PendingFile[]>([]);
   const [status, setStatus] = useState<string | null>(null);
+  const previewUrlsRef = useRef(new Set<string>());
   const supabase = createClient();
+
+  const createPendingFile = (file: File, needsCompression: boolean): PendingFile => {
+    const previewUrl = file.type.startsWith('image/') ? URL.createObjectURL(file) : null;
+    if (previewUrl) previewUrlsRef.current.add(previewUrl);
+    return { id: crypto.randomUUID(), file, previewUrl, needsCompression };
+  };
+
+  const releasePreview = (pendingFile: PendingFile) => {
+    if (!pendingFile.previewUrl) return;
+    URL.revokeObjectURL(pendingFile.previewUrl);
+    previewUrlsRef.current.delete(pendingFile.previewUrl);
+  };
+
+  useEffect(() => () => {
+    previewUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
+    previewUrlsRef.current.clear();
+  }, []);
 
   const loadFiles = useCallback(async () => {
     try {
@@ -109,11 +136,13 @@ export function FileShare({ roomId, receiverEmail }: FileShareProps) {
     };
   }, [supabase, roomId, loadFiles]);
 
-  const uploadFiles = async (selectedFiles: File[]) => {
-    if (selectedFiles.length === 0) return;
+  const uploadFiles = async (selectedFiles: File[]): Promise<Set<File>> => {
+    if (selectedFiles.length === 0) return new Set();
     setUploading(true);
     setStatus(null);
     let uploadedCount = 0;
+    const failedFiles = new Set<File>();
+    const errors: string[] = [];
 
     try {
       for (const file of selectedFiles) {
@@ -125,7 +154,8 @@ export function FileShare({ roomId, receiverEmail }: FileShareProps) {
         const tokenResult = await tokenResponse.json() as { path?: string; token?: string; error?: string };
 
         if (!tokenResponse.ok || !tokenResult.path || !tokenResult.token) {
-          setStatus(`Erreur pour « ${file.name} » : ${tokenResult.error || 'autorisation refusée'}`);
+          failedFiles.add(file);
+          errors.push(`Erreur pour « ${file.name} » : ${tokenResult.error || 'autorisation refusée'}`);
           continue;
         }
 
@@ -137,7 +167,8 @@ export function FileShare({ roomId, receiverEmail }: FileShareProps) {
         );
 
         if (error) {
-          setStatus(`Erreur pour « ${file.name} » : ${error.message}`);
+          failedFiles.add(file);
+          errors.push(`Erreur pour « ${file.name} » : ${error.message}`);
           continue;
         }
 
@@ -151,11 +182,13 @@ export function FileShare({ roomId, receiverEmail }: FileShareProps) {
         }
       }
       await loadFiles();
-      if (uploadedCount > 0) {
-        setStatus(`${uploadedCount} fichier${uploadedCount > 1 ? 's' : ''} partagé${uploadedCount > 1 ? 's' : ''}.`);
-      }
+      setStatus(errors.length > 0
+        ? errors.join(' ')
+        : `${uploadedCount} fichier${uploadedCount > 1 ? 's' : ''} partagé${uploadedCount > 1 ? 's' : ''}.`);
+      return failedFiles;
     } catch {
       setStatus('L’envoi a échoué. Vérifiez votre connexion puis réessayez.');
+      return new Set(selectedFiles);
     } finally {
       setUploading(false);
     }
@@ -166,35 +199,58 @@ export function FileShare({ roomId, receiverEmail }: FileShareProps) {
     event.target.value = '';
     if (selectedFiles.length === 0) return;
 
-    const regularFiles = selectedFiles.filter((file) => file.size <= MAX_FILE_SIZE);
-    const largeFiles = selectedFiles.filter((file) => file.size > MAX_FILE_SIZE);
-    const compressible = largeFiles.filter((file) => COMPRESSIBLE_IMAGE_TYPES.has(file.type));
-    const unsupported = largeFiles.filter((file) => !COMPRESSIBLE_IMAGE_TYPES.has(file.type));
+    const acceptedFiles = selectedFiles
+      .filter((file) => file.size <= MAX_FILE_SIZE || COMPRESSIBLE_IMAGE_TYPES.has(file.type))
+      .map((file) => createPendingFile(file, file.size > MAX_FILE_SIZE));
+    const unsupported = selectedFiles.filter((file) => (
+      file.size > MAX_FILE_SIZE && !COMPRESSIBLE_IMAGE_TYPES.has(file.type)
+    ));
 
-    setPendingImages(compressible);
+    if (acceptedFiles.length > 0) {
+      setPendingFiles((current) => [...current, ...acceptedFiles]);
+      setStatus(`${acceptedFiles.length} fichier${acceptedFiles.length > 1 ? 's' : ''} ajouté${acceptedFiles.length > 1 ? 's' : ''} à la sélection. Vérifiez puis envoyez.`);
+    }
     if (unsupported.length > 0) {
       setStatus(`${unsupported.map((file) => file.name).join(', ')} dépasse 2 Mio et ne peut pas être compressé ici. Réduisez ces fichiers avant l’envoi.`);
     }
-    if (regularFiles.length > 0) void uploadFiles(regularFiles);
   };
 
-  const handleCompressAndUpload = async () => {
-    if (pendingImages.length === 0) return;
+  const handleCompressPending = async () => {
+    const oversizedImages = pendingFiles.filter((item) => item.needsCompression);
+    if (oversizedImages.length === 0) return;
     setUploading(true);
     setStatus('Compression des images en cours…');
-    const compressedFiles: File[] = [];
+    const replacements = new Map<File, PendingFile>();
+    const errors: string[] = [];
 
-    for (const image of pendingImages) {
+    for (const item of oversizedImages) {
       try {
-        compressedFiles.push(await compressImage(image));
+        const compressed = await compressImage(item.file);
+        replacements.set(item.file, createPendingFile(compressed, false));
+        releasePreview(item);
       } catch (error) {
-        setStatus(error instanceof Error ? error.message : `Impossible de compresser ${image.name}.`);
+        errors.push(error instanceof Error ? error.message : `Impossible de compresser ${item.file.name}.`);
       }
     }
 
-    setPendingImages([]);
+    setPendingFiles((current) => current.map((item) => replacements.get(item.file) || item));
     setUploading(false);
-    if (compressedFiles.length > 0) await uploadFiles(compressedFiles);
+    setStatus(errors.length > 0
+      ? errors.join(' ')
+      : `${oversizedImages.length} image${oversizedImages.length > 1 ? 's' : ''} compressée${oversizedImages.length > 1 ? 's' : ''}. Vérifiez puis envoyez.`);
+  };
+
+  const handleSendPending = async () => {
+    if (pendingFiles.length === 0 || pendingFiles.some((item) => item.needsCompression)) return;
+    const failedFiles = await uploadFiles(pendingFiles.map((item) => item.file));
+    const successfulFiles = pendingFiles.filter((item) => !failedFiles.has(item.file));
+    successfulFiles.forEach(releasePreview);
+    setPendingFiles((current) => current.filter((item) => failedFiles.has(item.file)));
+  };
+
+  const removePendingFile = (pendingFile: PendingFile) => {
+    releasePreview(pendingFile);
+    setPendingFiles((current) => current.filter((item) => item !== pendingFile));
   };
 
   return (
@@ -208,36 +264,58 @@ export function FileShare({ roomId, receiverEmail }: FileShareProps) {
 
       <label className="flex min-h-20 cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed border-slate-700 bg-slate-950 p-4 text-center transition-colors hover:border-indigo-500">
         <span className="text-xs text-slate-300">
-          {uploading ? 'Envoi en cours…' : 'Choisir un ou plusieurs fichiers (2 Mio maximum chacun)'}
+          {uploading ? 'Traitement en cours…' : 'Ajouter des fichiers à partager (2 Mio maximum chacun)'}
         </span>
         <input type="file" multiple onChange={handleFileSelection} disabled={uploading} className="sr-only" />
       </label>
 
-      {pendingImages.length > 0 && (
-        <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-800 bg-amber-950/40 p-3">
-          <p className="min-w-0 flex-1 text-xs text-amber-200">
-            {pendingImages.map((image) => image.name).join(', ')} dépasse 2 Mio. Voulez-vous compresser et envoyer {pendingImages.length > 1 ? 'ces images' : 'cette image'} ?
-          </p>
-          <div className="flex gap-2">
-            <button
-              type="button"
-              onClick={() => setPendingImages([])}
-              disabled={uploading}
-              className="rounded-md border border-slate-600 px-3 py-2 text-xs text-slate-200 hover:bg-slate-800"
-            >
-              Annuler
-            </button>
-            <button
-              type="button"
-              onClick={() => void handleCompressAndUpload()}
-              disabled={uploading}
-              className="rounded-md bg-indigo-600 px-3 py-2 text-xs font-semibold text-white hover:bg-indigo-500 disabled:opacity-60"
-            >
-              Compresser et envoyer
-            </button>
+      {pendingFiles.length > 0 && (
+        <div className="space-y-3 rounded-lg border border-indigo-800/70 bg-indigo-950/30 p-3">
+          <p className="text-xs font-semibold text-slate-200">À envoyer ({pendingFiles.length})</p>
+          <ul className="max-h-48 space-y-2 overflow-y-auto">
+            {pendingFiles.map((item) => (
+              <li key={item.id} className="flex min-w-0 items-center gap-3 rounded-md bg-slate-950/80 p-2">
+                {item.previewUrl ? (
+                  <Image src={item.previewUrl} alt={`Aperçu de ${item.file.name}`} width={48} height={48} unoptimized className="h-12 w-12 shrink-0 rounded object-cover" />
+                ) : (
+                  <span aria-hidden="true" className="flex h-12 w-12 shrink-0 items-center justify-center rounded bg-slate-800 text-lg">📄</span>
+                )}
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-xs text-slate-200" title={item.file.name}>{item.file.name}</span>
+                  <span className={`block text-[10px] ${item.needsCompression ? 'text-amber-300' : 'text-slate-500'}`}>
+                    {item.needsCompression ? 'À compresser avant envoi' : `${(item.file.size / (1024 * 1024)).toFixed(2)} Mio`}
+                  </span>
+                </span>
+                <button type="button" onClick={() => removePendingFile(item)} disabled={uploading} className="shrink-0 rounded border border-slate-700 px-2 py-1 text-xs text-slate-300 hover:bg-slate-800 disabled:opacity-50" aria-label={`Retirer ${item.file.name}`}>
+                  Retirer
+                </button>
+              </li>
+            ))}
+          </ul>
+          <div className="flex flex-wrap justify-end gap-2">
+            {pendingFiles.some((item) => item.needsCompression) && (
+              <button type="button" onClick={() => void handleCompressPending()} disabled={uploading} className="rounded-md border border-amber-700 px-3 py-2 text-xs font-semibold text-amber-200 hover:bg-amber-950 disabled:opacity-60">
+                Compresser les images
+              </button>
+            )}
           </div>
         </div>
       )}
+
+      <div className="flex justify-end">
+        <button
+          type="button"
+          onClick={() => void handleSendPending()}
+          disabled={uploading || pendingFiles.length === 0 || pendingFiles.some((item) => item.needsCompression)}
+          className="rounded-md bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {uploading
+            ? 'Envoi en cours…'
+            : pendingFiles.length > 0
+              ? `Envoyer ${pendingFiles.length} fichier${pendingFiles.length > 1 ? 's' : ''}`
+              : 'Envoyer les fichiers'}
+        </button>
+      </div>
 
       {status && <p className="text-xs text-slate-300" role="status">{status}</p>}
 
@@ -249,9 +327,14 @@ export function FileShare({ roomId, receiverEmail }: FileShareProps) {
               <span className="shrink-0 text-slate-500">
                 {file.size ? `${(file.size / (1024 * 1024)).toFixed(2)} Mio` : 'Fichier'}
               </span>
-              <a href={file.url} target="_blank" rel="noopener noreferrer" className="shrink-0 font-medium text-indigo-400 hover:underline">
-                {file.contentType.startsWith('image/') ? 'Voir' : 'Télécharger'}
-              </a>
+              <div className="flex shrink-0 items-center gap-2">
+                <a href={file.url} target="_blank" rel="noopener noreferrer" className="font-medium text-indigo-400 hover:underline">
+                  Ouvrir
+                </a>
+                <a href={file.downloadUrl || file.url} className="font-medium text-indigo-400 hover:underline">
+                  Télécharger
+                </a>
+              </div>
             </li>
           ))}
         </ul>

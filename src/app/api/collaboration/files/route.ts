@@ -93,19 +93,24 @@ export async function GET(request: Request) {
 
   const files = await Promise.all((data || []).filter((item) => item.id).map(async (item) => {
     const path = `${folder}/${item.name}`;
+    const fileName = item.name.replace(/^[0-9a-f-]{36}_/, '');
     const { data: signed, error: signedError } = await supabase.storage
       .from(BUCKET)
       .createSignedUrl(path, SIGNED_URL_TTL_SECONDS);
 
     if (signedError || !signed) return null;
+    const { data: download } = await supabase.storage
+      .from(BUCKET)
+      .createSignedUrl(path, SIGNED_URL_TTL_SECONDS, { download: fileName });
     return {
       id: path,
-      name: item.name.replace(/^[0-9a-f-]{36}_/, ''),
+      name: fileName,
       path,
       size: item.metadata?.size || 0,
       contentType: item.metadata?.mimetype || 'application/octet-stream',
       createdAt: item.created_at || '',
       url: signed.signedUrl,
+      downloadUrl: download?.signedUrl || signed.signedUrl,
     };
   }));
 

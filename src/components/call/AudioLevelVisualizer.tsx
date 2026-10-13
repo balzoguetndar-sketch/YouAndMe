@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from 'react';
 interface AudioLevelVisualizerProps {
   stream: MediaStream | null;
   isMuted?: boolean;
+  isAvailable?: boolean;
   label?: string;
   size?: 'sm' | 'md' | 'lg';
 }
@@ -12,6 +13,7 @@ interface AudioLevelVisualizerProps {
 export function AudioLevelVisualizer({
   stream,
   isMuted = false,
+  isAvailable = true,
   label = 'Micro',
   size = 'md',
 }: AudioLevelVisualizerProps) {
@@ -21,7 +23,7 @@ export function AudioLevelVisualizer({
   const audioContextRef = useRef<AudioContext | null>(null);
 
   useEffect(() => {
-    if (!stream || isMuted) {
+    if (!stream || isMuted || !isAvailable) {
       return () => {
         setAudioLevel(0);
         setIsSpeaking(false);
@@ -92,7 +94,7 @@ export function AudioLevelVisualizer({
         audioContextRef.current = null;
       }
     };
-  }, [stream, isMuted]);
+  }, [stream, isMuted, isAvailable]);
 
   // Nombre de barres du VU-mètre
   const barsCount = size === 'sm' ? 4 : size === 'lg' ? 8 : 6;
@@ -105,7 +107,7 @@ export function AudioLevelVisualizer({
           <span className="absolute w-4 h-4 rounded-full bg-emerald-500/40 animate-ping" />
         )}
         <span className={`text-xs ${isMuted ? 'opacity-40' : isSpeaking ? 'text-emerald-400' : 'text-slate-400'}`}>
-          {isMuted ? '🔇' : '🎙️'}
+          {!isAvailable ? '⌛' : isMuted ? '🔇' : '🎙️'}
         </span>
       </span>
 
@@ -113,14 +115,14 @@ export function AudioLevelVisualizer({
       <div className="flex items-center gap-0.5 h-3.5">
         {Array.from({ length: barsCount }).map((_, idx) => {
           const threshold = ((idx + 1) / barsCount) * 100;
-          const isActive = !isMuted && audioLevel >= threshold * 0.5;
-          const heightPercent = isMuted ? 15 : isActive ? Math.max(25, (audioLevel / 100) * 100) : 20;
+          const isActive = isAvailable && !isMuted && audioLevel >= threshold * 0.5;
+          const heightPercent = isMuted || !isAvailable ? 15 : isActive ? Math.max(25, (audioLevel / 100) * 100) : 20;
 
           return (
             <div
               key={idx}
               className={`w-1 rounded-full transition-all duration-75 ${
-                isMuted
+                isMuted || !isAvailable
                   ? 'bg-slate-700 h-1'
                   : isActive
                   ? idx > barsCount - 3
@@ -136,7 +138,9 @@ export function AudioLevelVisualizer({
 
       {/* Libellé de statut */}
       <span className="text-[11px] font-semibold text-slate-300">
-        {isMuted ? (
+        {!isAvailable ? (
+          <span className="text-amber-300">{label}</span>
+        ) : isMuted ? (
           <span className="text-red-400">Coupé</span>
         ) : isSpeaking ? (
           <span className="text-emerald-400 font-bold">Actif ({audioLevel}%)</span>

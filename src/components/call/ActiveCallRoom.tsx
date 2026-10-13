@@ -16,6 +16,11 @@ type WhiteboardOpenRequest = {
   senderEmail: string;
 };
 
+type FileShareOpenRequest = {
+  requestId: string;
+  senderEmail: string;
+};
+
 type ActiveCallRoomProps = {
   callerEmail: string;
   receiverEmail: string;
@@ -43,6 +48,8 @@ export function ActiveCallRoom({
   const remoteStreamRef = useRef<MediaStream | null>(null);
   const whiteboardControlChannelRef = useRef<RealtimeChannel | null>(null);
   const outgoingWhiteboardRequestIdRef = useRef<string | null>(null);
+  const outgoingFileShareRequestIdRef = useRef<string | null>(null);
+  const outgoingFileShareTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [remoteAudioStream, setRemoteAudioStream] = useState<MediaStream | null>(null);
@@ -53,11 +60,16 @@ export function ActiveCallRoom({
   const [micMuted, setMicMuted] = useState(false);
   const [camOff, setCamOff] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState<'connecting' | 'connected' | 'disconnected'>('connecting');
+  const [connectionWarning, setConnectionWarning] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'video' | 'tarifs' | 'whiteboard' | 'files'>('video');
   const [isWhiteboardControlReady, setIsWhiteboardControlReady] = useState(false);
   const [incomingWhiteboardRequest, setIncomingWhiteboardRequest] = useState<WhiteboardOpenRequest | null>(null);
   const [outgoingWhiteboardRequestId, setOutgoingWhiteboardRequestId] = useState<string | null>(null);
   const [whiteboardRequestStatus, setWhiteboardRequestStatus] = useState<'accepted' | 'declined' | 'unavailable' | null>(null);
+  const [incomingFileShareRequest, setIncomingFileShareRequest] = useState<FileShareOpenRequest | null>(null);
+  const [outgoingFileShareRequestId, setOutgoingFileShareRequestId] = useState<string | null>(null);
+  const [fileShareRequestStatus, setFileShareRequestStatus] = useState<'accepted' | 'declined' | 'unavailable' | null>(null);
+  const [isFileShareAuthorized, setIsFileShareAuthorized] = useState(false);
   const [showPricingSetting, setShowPricingSetting] = useState<boolean>(() => {
     if (typeof window === 'undefined') {
       return true;
@@ -119,12 +131,49 @@ export function ActiveCallRoom({
         setOutgoingWhiteboardRequestId(null);
         setWhiteboardRequestStatus(payload.accepted === true ? 'accepted' : 'declined');
       })
+      .on('broadcast', { event: 'files-open-request' }, ({ payload }) => {
+        const senderEmail = typeof payload?.from === 'string' ? payload.from : '';
+        const targetEmail = typeof payload?.to === 'string' ? payload.to : '';
+        const requestId = typeof payload?.requestId === 'string' ? payload.requestId : '';
+
+        if (
+          !requestId ||
+          senderEmail.toLowerCase() !== receiverEmail.toLowerCase() ||
+          targetEmail.toLowerCase() !== callerEmail.toLowerCase()
+        ) return;
+
+        setIncomingFileShareRequest({ requestId, senderEmail });
+      })
+      .on('broadcast', { event: 'files-open-response' }, ({ payload }) => {
+        const senderEmail = typeof payload?.from === 'string' ? payload.from : '';
+        const targetEmail = typeof payload?.to === 'string' ? payload.to : '';
+
+        if (
+          payload?.requestId !== outgoingFileShareRequestIdRef.current ||
+          senderEmail.toLowerCase() !== receiverEmail.toLowerCase() ||
+          targetEmail.toLowerCase() !== callerEmail.toLowerCase()
+        ) return;
+
+        if (outgoingFileShareTimeoutRef.current) clearTimeout(outgoingFileShareTimeoutRef.current);
+        outgoingFileShareTimeoutRef.current = null;
+        outgoingFileShareRequestIdRef.current = null;
+        setOutgoingFileShareRequestId(null);
+        if (payload.accepted === true) {
+          setIsFileShareAuthorized(true);
+          setActiveTab('files');
+          setFileShareRequestStatus('accepted');
+        } else {
+          setFileShareRequestStatus('declined');
+        }
+      })
       .subscribe((status) => {
         if (isActive) setIsWhiteboardControlReady(status === 'SUBSCRIBED');
       });
 
     return () => {
       isActive = false;
+      if (outgoingFileShareTimeoutRef.current) clearTimeout(outgoingFileShareTimeoutRef.current);
+      outgoingFileShareTimeoutRef.current = null;
       whiteboardControlChannelRef.current = null;
       supabase.removeChannel(channel);
     };
@@ -178,6 +227,70 @@ export function ActiveCallRoom({
     if (status !== 'ok') setWhiteboardRequestStatus('unavailable');
   };
 
+  const handleOpenFiles = () => {
+    setFileShareRequestStatus(null);
+    if (isFileShareAuthorized) {
+      setActiveTab('files');
+      return;
+    }
+
+    const channel = whiteboardControlChannelRef.current;
+    if (!isWhiteboardControlReady || !channel) {
+      setFileShareRequestStatus('unavailable');
+      return;
+    }
+
+    const requestId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    outgoingFileShareRequestIdRef.current = requestId;
+    setOutgoingFileShareRequestId(requestId);
+    outgoingFileShareTimeoutRef.current = setTimeout(() => {
+      if (outgoingFileShareRequestIdRef.current !== requestId) return;
+      outgoingFileShareRequestIdRef.current = null;
+      setOutgoingFileShareRequestId(null);
+      setFileShareRequestStatus('unavailable');
+    }, 15000);
+
+    void channel.send({
+      type: 'broadcast',
+      event: 'files-open-request',
+      payload: { requestId, from: callerEmail, to: receiverEmail },
+    }).then((status) => {
+      if (status === 'ok') return;
+      if (outgoingFileShareTimeoutRef.current) clearTimeout(outgoingFileShareTimeoutRef.current);
+      outgoingFileShareTimeoutRef.current = null;
+      outgoingFileShareRequestIdRef.current = null;
+      setOutgoingFileShareRequestId(null);
+      setFileShareRequestStatus('unavailable');
+    });
+  };
+
+  const respondToFileShareRequest = async (accepted: boolean) => {
+    const request = incomingFileShareRequest;
+    const channel = whiteboardControlChannelRef.current;
+    if (!request || !channel) return;
+
+    setIncomingFileShareRequest(null);
+    const status = await channel.send({
+      type: 'broadcast',
+      event: 'files-open-response',
+      payload: {
+        requestId: request.requestId,
+        from: callerEmail,
+        to: request.senderEmail,
+        accepted,
+      },
+    });
+
+    if (status !== 'ok') {
+      setFileShareRequestStatus('unavailable');
+      return;
+    }
+    if (accepted) {
+      setIsFileShareAuthorized(true);
+      setActiveTab('files');
+    }
+  };
+
   // 2. Initialisation WebRTC complète avec file d'attente ICE Candidate sécurisée
   useEffect(() => {
     let isMounted = true;
@@ -191,6 +304,12 @@ export function ActiveCallRoom({
     // Stream distant accumulé
     const remoteStream = new MediaStream();
     remoteStreamRef.current = remoteStream;
+    let iceWarningTimeout: ReturnType<typeof setTimeout> | null = null;
+
+    const clearIceWarningTimeout = () => {
+      if (iceWarningTimeout) clearTimeout(iceWarningTimeout);
+      iceWarningTimeout = null;
+    };
 
     // Fonction pour vider la file d'attente des candidats ICE dès que la remoteDescription est prête
     const processPendingIceCandidates = async () => {
@@ -247,6 +366,7 @@ export function ActiveCallRoom({
       if (isMounted) {
         if (event.track.kind === 'audio') setRemoteAudioReceived(true);
         if (event.track.kind === 'video') setRemoteVideoReceived(true);
+        setConnectionWarning(null);
         setConnectionStatus('connected');
       }
     };
@@ -254,8 +374,25 @@ export function ActiveCallRoom({
     // Gestion des changements d'état de connexion ICE
     pc.oniceconnectionstatechange = () => {
       if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') {
+        clearIceWarningTimeout();
+        if (isMounted) setConnectionWarning(null);
         if (isMounted) setConnectionStatus('connected');
-      } else if (pc.iceConnectionState === 'disconnected' || pc.iceConnectionState === 'failed') {
+      } else if (pc.iceConnectionState === 'checking' || pc.iceConnectionState === 'disconnected') {
+        if (!iceWarningTimeout) {
+          iceWarningTimeout = setTimeout(() => {
+            if (!isMounted || pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') return;
+            setConnectionWarning('La connexion média est bloquée. Ce réseau mobile peut nécessiter un relais TURN.');
+          }, 12000);
+        }
+        if (pc.iceConnectionState === 'disconnected' && isMounted) setConnectionStatus('disconnected');
+      } else if (pc.iceConnectionState === 'failed') {
+        clearIceWarningTimeout();
+        if (isMounted) {
+          setConnectionStatus('disconnected');
+          setConnectionWarning('Connexion média impossible. Un relais TURN doit être configuré pour ce réseau.');
+        }
+      } else if (pc.iceConnectionState === 'closed') {
+        clearIceWarningTimeout();
         if (isMounted) setConnectionStatus('disconnected');
       }
     };
@@ -503,6 +640,7 @@ export function ActiveCallRoom({
     return () => {
       isMounted = false;
       soundManager.stop();
+      clearIceWarningTimeout();
       unsubscribeSignals();
       if (readyRetryTimer) clearInterval(readyRetryTimer);
       if (localStreamRef.current) {
@@ -644,6 +782,11 @@ export function ActiveCallRoom({
               ? '🟡 Négociation de la connexion...'
               : '🔴 Connexion interrompue'}
           </p>
+          {connectionWarning && (
+            <p className="mt-1 max-w-xl text-xs text-amber-300" role="status">
+              {connectionWarning}
+            </p>
+          )}
         </div>
 
         <div className="flex items-center gap-2">
@@ -695,14 +838,19 @@ export function ActiveCallRoom({
         </button>
 
         <button
-          onClick={() => setActiveTab('files')}
-          className={`px-4 py-2 rounded-xl font-semibold transition-all ${
+          onClick={handleOpenFiles}
+          disabled={outgoingFileShareRequestId !== null || (!isFileShareAuthorized && !isWhiteboardControlReady)}
+          className={`px-4 py-2 rounded-xl font-semibold transition-all disabled:cursor-wait disabled:opacity-60 ${
             activeTab === 'files'
               ? 'bg-indigo-600 text-white shadow-md'
               : 'bg-slate-900 text-slate-400 hover:bg-slate-800'
           }`}
         >
-          📁 Fichiers partagés
+          {outgoingFileShareRequestId
+            ? '⏳ En attente d’accord…'
+            : !isFileShareAuthorized && !isWhiteboardControlReady
+              ? 'Connexion aux partages…'
+              : '📁 Fichiers partagés'}
         </button>
       </div>
 
@@ -730,6 +878,30 @@ export function ActiveCallRoom({
         </div>
       )}
 
+      {incomingFileShareRequest && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-indigo-800/70 bg-indigo-950/40 px-4 py-3" role="status">
+          <p className="text-sm text-slate-200">
+            {incomingFileShareRequest.senderEmail} demande votre accord pour ouvrir le partage de fichiers.
+          </p>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => void respondToFileShareRequest(true)}
+              className="rounded-md bg-indigo-600 px-3 py-2 text-xs font-semibold text-white hover:bg-indigo-500"
+            >
+              Accepter
+            </button>
+            <button
+              type="button"
+              onClick={() => void respondToFileShareRequest(false)}
+              className="rounded-md border border-slate-600 px-3 py-2 text-xs font-semibold text-slate-200 hover:bg-slate-800"
+            >
+              Refuser
+            </button>
+          </div>
+        </div>
+      )}
+
       {outgoingWhiteboardRequestId && (
         <p className="text-xs text-slate-400" role="status">
           Demande envoyée à votre correspondant, en attente de sa réponse.
@@ -740,6 +912,18 @@ export function ActiveCallRoom({
           {whiteboardRequestStatus === 'accepted' && 'Votre correspondant a accepté la demande d’ouverture du tableau.'}
           {whiteboardRequestStatus === 'declined' && 'Votre correspondant a refusé l’ouverture du tableau.'}
           {whiteboardRequestStatus === 'unavailable' && 'La demande n’a pas pu être transmise. Vérifiez la connexion puis réessayez.'}
+        </p>
+      )}
+      {outgoingFileShareRequestId && (
+        <p className="text-xs text-slate-400" role="status">
+          Demande de partage envoyée ; vos fichiers ne seront proposés qu&apos;après l&apos;accord de votre correspondant.
+        </p>
+      )}
+      {fileShareRequestStatus && !outgoingFileShareRequestId && (
+        <p className="text-xs text-slate-400" role="status">
+          {fileShareRequestStatus === 'accepted' && 'Votre correspondant a accepté le partage de fichiers.'}
+          {fileShareRequestStatus === 'declined' && 'Votre correspondant a refusé le partage de fichiers.'}
+          {fileShareRequestStatus === 'unavailable' && 'Aucune réponse reçue. Vérifiez la connexion puis redemandez l’accès.'}
         </p>
       )}
 
@@ -780,8 +964,8 @@ export function ActiveCallRoom({
             <div className="absolute top-3 right-3">
               <AudioLevelVisualizer
                 stream={remoteAudioStream}
-                isMuted={!remoteAudioReceived}
-                label="Audio distant"
+                isAvailable={remoteAudioReceived}
+                label={remoteAudioReceived ? 'Audio distant' : 'Audio non reçu'}
                 size="sm"
               />
             </div>
@@ -837,11 +1021,11 @@ export function ActiveCallRoom({
 
       {/* Vue 3 : Tableau partagé synchrone */}
       <div className={activeTab === 'whiteboard' ? 'block' : 'hidden'} aria-hidden={activeTab !== 'whiteboard'}>
-        <Whiteboard roomId={roomId} />
+        <Whiteboard roomId={roomId} isInitiator={isInitiator} />
       </div>
 
       {/* Vue 4 : Partage de fichiers & images */}
-      {activeTab === 'files' && (
+      {activeTab === 'files' && isFileShareAuthorized && (
         <FileShare roomId={roomId} receiverEmail={receiverEmail} />
       )}
 

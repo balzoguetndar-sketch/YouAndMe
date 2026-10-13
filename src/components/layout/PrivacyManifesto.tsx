@@ -15,7 +15,7 @@ export function PrivacyManifesto() {
         </p>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-3 text-xs">
+      <div className="grid gap-4 text-xs md:grid-cols-2 xl:grid-cols-4">
         <div className="p-4 rounded-xl bg-slate-950/60 border border-slate-800 space-y-2">
           <div className="text-lg">🌍</div>
           <h4 className="font-bold text-slate-200">Connexion Mondiale Directe</h4>
@@ -37,6 +37,14 @@ export function PrivacyManifesto() {
           <h4 className="font-bold text-slate-200">Bientôt sur tous vos stores</h4>
           <p className="text-slate-400 leading-relaxed">
             Prochainement disponible en téléchargement sur Google Play, App Store et Microsoft Store.
+          </p>
+        </div>
+
+        <div className="p-4 rounded-xl bg-slate-950/60 border border-slate-800 space-y-2">
+          <div className="text-lg">🌱</div>
+          <h4 className="font-bold text-slate-200">Sobriété numérique</h4>
+          <p className="text-slate-400 leading-relaxed">
+            Moins de données conservées, c&apos;est aussi moins de stockage numérique inutile.
           </p>
         </div>
       </div>
