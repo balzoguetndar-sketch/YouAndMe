@@ -41,6 +41,88 @@ type ActiveCallRoomProps = {
   onEndCall: (notifyPeer?: boolean) => void;
 };
 
+type AmbienceTheme = {
+  id: string;
+  label: string;
+  icon: string;
+  badgeBg: string;
+  roomBg: string;
+  roomBorder: string;
+  videoBorder: string;
+  videoGlow: string;
+  accentText: string;
+  avatarBg: string;
+  tagline: string;
+};
+
+const AMBIENCE_THEMES: Record<string, AmbienceTheme> = {
+  neutral: {
+    id: 'neutral',
+    label: '⚪ Neutre',
+    icon: '⚪',
+    badgeBg: 'bg-slate-900 text-slate-300 border-slate-700',
+    roomBg: 'bg-slate-950',
+    roomBorder: 'border-slate-800',
+    videoBorder: 'border-slate-800',
+    videoGlow: 'shadow-xl shadow-slate-950/50',
+    accentText: 'text-indigo-400',
+    avatarBg: 'bg-slate-800 text-indigo-400',
+    tagline: 'Échange sobre et confidentiel',
+  },
+  love: {
+    id: 'love',
+    label: '❤️ Amoureux',
+    icon: '❤️',
+    badgeBg: 'bg-rose-950 text-rose-300 border-rose-800',
+    roomBg: 'bg-gradient-to-b from-rose-950/40 via-slate-950 to-pink-950/30',
+    roomBorder: 'border-rose-900/60',
+    videoBorder: 'border-rose-800/80',
+    videoGlow: 'shadow-2xl shadow-rose-950/40',
+    accentText: 'text-rose-400',
+    avatarBg: 'bg-rose-950 text-rose-300 ring-2 ring-rose-500/40',
+    tagline: 'Un moment privilégié et intime à deux',
+  },
+  family: {
+    id: 'family',
+    label: '🏡 Famille',
+    icon: '🏡',
+    badgeBg: 'bg-amber-950 text-amber-300 border-amber-800',
+    roomBg: 'bg-gradient-to-b from-amber-950/35 via-slate-950 to-orange-950/25',
+    roomBorder: 'border-amber-900/60',
+    videoBorder: 'border-amber-800/80',
+    videoGlow: 'shadow-2xl shadow-amber-950/40',
+    accentText: 'text-amber-400',
+    avatarBg: 'bg-amber-950 text-amber-300 ring-2 ring-amber-500/40',
+    tagline: 'Chaleur et partage en famille',
+  },
+  couple: {
+    id: 'couple',
+    label: '💍 Couple',
+    icon: '💍',
+    badgeBg: 'bg-purple-950 text-purple-300 border-purple-800',
+    roomBg: 'bg-gradient-to-b from-purple-950/40 via-slate-950 to-violet-950/30',
+    roomBorder: 'border-purple-900/60',
+    videoBorder: 'border-purple-800/80',
+    videoGlow: 'shadow-2xl shadow-purple-950/40',
+    accentText: 'text-purple-400',
+    avatarBg: 'bg-purple-950 text-purple-300 ring-2 ring-purple-500/40',
+    tagline: 'Complicité et harmonie à deux',
+  },
+  friendship: {
+    id: 'friendship',
+    label: '🤝 Amitié',
+    icon: '🤝',
+    badgeBg: 'bg-sky-950 text-sky-300 border-sky-800',
+    roomBg: 'bg-gradient-to-b from-sky-950/35 via-slate-950 to-teal-950/25',
+    roomBorder: 'border-sky-900/60',
+    videoBorder: 'border-sky-800/80',
+    videoGlow: 'shadow-2xl shadow-sky-950/40',
+    accentText: 'text-sky-400',
+    avatarBg: 'bg-sky-950 text-sky-300 ring-2 ring-sky-500/40',
+    tagline: 'Détente et complicité amicale',
+  },
+};
+
 export function ActiveCallRoom({
   callerEmail,
   receiverEmail,
@@ -50,6 +132,8 @@ export function ActiveCallRoom({
   ambience,
   onEndCall,
 }: ActiveCallRoomProps) {
+  const [currentAmbience, setCurrentAmbience] = useState<string>(ambience || 'neutral');
+  const [showAmbiencePicker, setShowAmbiencePicker] = useState(false);
   const localVideoRef = useRef<HTMLVideoElement>(null);
   const remoteVideoRef = useRef<HTMLVideoElement>(null);
   const remoteAudioRef = useRef<HTMLAudioElement>(null);
@@ -694,6 +778,8 @@ export function ActiveCallRoom({
           }
         } else if (signal.type === 'call-ended') {
           finishCall(false);
+        } else if (signal.type === 'ambience-changed' && signal.ambience) {
+          setCurrentAmbience(signal.ambience);
         } else if (signal.type === 'peer-ready' && isInitiator) {
           await createAndSendOffer();
         }
@@ -796,25 +882,21 @@ export function ActiveCallRoom({
 
   const hasLocalVideo = stream?.getVideoTracks().some((track) => track.readyState === 'live') ?? false;
 
-  const getAmbianceBadge = (amb: string) => {
-    switch (amb) {
-      case 'love':
-        return { label: '❤️ Ambiance Amoureuse', bg: 'bg-rose-950 text-rose-300 border-rose-800' };
-      case 'family':
-        return { label: '🏡 Ambiance Famille', bg: 'bg-amber-950 text-amber-300 border-amber-800' };
-      case 'couple':
-        return { label: '💍 Ambiance Couple', bg: 'bg-purple-950 text-purple-300 border-purple-800' };
-      case 'friendship':
-        return { label: '🤝 Ambiance Amitié', bg: 'bg-blue-950 text-blue-300 border-blue-800' };
-      default:
-        return { label: '⚪ Ambiance Neutre', bg: 'bg-slate-800 text-slate-300 border-slate-700' };
-    }
+  const handleSwitchAmbience = async (newAmbience: string) => {
+    setCurrentAmbience(newAmbience);
+    await sendSignal(receiverEmail, {
+      type: 'ambience-changed',
+      sender: callerEmail,
+      target: receiverEmail,
+      callId,
+      ambience: newAmbience,
+    }).catch(() => {});
   };
 
-  const badge = getAmbianceBadge(ambience);
+  const theme = AMBIENCE_THEMES[currentAmbience] || AMBIENCE_THEMES.neutral;
 
   return (
-    <div className="w-full max-w-5xl mx-auto bg-slate-950 border border-slate-800 rounded-3xl p-4 sm:p-6 shadow-2xl space-y-6 text-slate-100 animate-in fade-in">
+    <div className={`w-full max-w-5xl mx-auto border rounded-3xl p-4 sm:p-6 shadow-2xl space-y-6 text-slate-100 transition-all duration-700 animate-in fade-in ${theme.roomBg} ${theme.roomBorder}`}>
       <audio ref={remoteAudioRef} autoPlay playsInline className="sr-only" />
 
       {mediaWarning && (
@@ -837,20 +919,26 @@ export function ActiveCallRoom({
       )}
 
       {/* En-tête de la salle d'appel */}
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 pb-4">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800/80 pb-4">
         <div>
           <div className="flex items-center gap-2">
             <h2 className="text-base sm:text-lg font-bold text-white">
-              Communication en direct : <span className="text-indigo-400">{receiverEmail}</span>
+              Communication en direct : <span className={`transition-colors duration-500 ${theme.accentText}`}>{receiverEmail}</span>
             </h2>
           </div>
-          <p className="text-xs text-slate-400 mt-0.5">
-            {connectionStatus === 'connected'
-              ? '🟢 Flux P2P chiffré actif'
-              : connectionStatus === 'connecting'
-              ? '🟡 Négociation de la connexion...'
-              : '🔴 Connexion interrompue'}
-          </p>
+          <div className="flex flex-wrap items-center gap-2 mt-1">
+            <p className="text-xs text-slate-400">
+              {connectionStatus === 'connected'
+                ? '🟢 Flux P2P chiffré actif'
+                : connectionStatus === 'connecting'
+                ? '🟡 Négociation de la connexion...'
+                : '🔴 Connexion interrompue'}
+            </p>
+            <span className="text-slate-600 text-xs">•</span>
+            <p className={`text-xs font-medium italic transition-colors duration-500 ${theme.accentText}`}>
+              {theme.tagline}
+            </p>
+          </div>
           {connectionWarning && (
             <p className="mt-1 max-w-xl text-xs text-amber-300" role="status">
               {connectionWarning}
@@ -859,10 +947,46 @@ export function ActiveCallRoom({
         </div>
 
         <div className="flex items-center gap-2">
-          <span className={`px-3 py-1 rounded-full text-xs font-semibold border ${badge.bg}`}>
-            {badge.label}
-          </span>
-          <span className="px-3 py-1 rounded-full text-xs font-semibold bg-emerald-950 text-emerald-400 border border-emerald-800 animate-pulse">
+          {/* Sélecteur d'ambiance en direct */}
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => setShowAmbiencePicker((prev) => !prev)}
+              className={`px-3 py-1.5 rounded-full text-xs font-bold border flex items-center gap-1.5 transition-all hover:scale-105 shadow-md cursor-pointer ${theme.badgeBg}`}
+              title="Changer l'ambiance en direct (synchronisé avec votre correspondant)"
+            >
+              <span>{theme.label}</span>
+              <span className="text-[10px] opacity-70">▾</span>
+            </button>
+
+            {showAmbiencePicker && (
+              <div className="absolute right-0 top-full mt-2 z-50 w-52 rounded-2xl bg-slate-900/95 backdrop-blur-xl border border-slate-700 p-2 shadow-2xl space-y-1">
+                <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 px-2 py-1">
+                  Ambiance en direct
+                </p>
+                {Object.values(AMBIENCE_THEMES).map((item) => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => {
+                      void handleSwitchAmbience(item.id);
+                      setShowAmbiencePicker(false);
+                    }}
+                    className={`w-full text-left px-3 py-2 rounded-xl text-xs font-semibold flex items-center justify-between transition-all cursor-pointer ${
+                      currentAmbience === item.id
+                        ? 'bg-indigo-600 text-white shadow'
+                        : 'text-slate-200 hover:bg-slate-800'
+                    }`}
+                  >
+                    <span>{item.label}</span>
+                    {currentAmbience === item.id && <span>✓</span>}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <span className="px-3 py-1.5 rounded-full text-xs font-semibold bg-emerald-950 text-emerald-400 border border-emerald-800 animate-pulse">
             🔴 Session Active
           </span>
         </div>
@@ -1000,7 +1124,7 @@ export function ActiveCallRoom({
       {activeTab === 'video' && (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {/* Flux de l'interlocuteur distant */}
-          <div className="relative bg-slate-900 rounded-2xl overflow-hidden border border-slate-800 h-52 sm:h-64 md:h-72 max-h-[46vh] flex items-center justify-center shadow-lg">
+          <div className={`relative bg-slate-900/90 rounded-2xl overflow-hidden border ${theme.videoBorder} ${theme.videoGlow} h-52 sm:h-64 md:h-72 max-h-[46vh] flex items-center justify-center shadow-lg transition-all duration-700`}>
             {callType === 'video' && remoteVideoReceived && (
               <video
                 ref={remoteVideoRef}
@@ -1012,8 +1136,8 @@ export function ActiveCallRoom({
             )}
             {(callType !== 'video' || !remoteVideoReceived) && (
               <div className="text-center p-6 space-y-3">
-                <div className="w-16 h-16 mx-auto rounded-full bg-slate-800 flex items-center justify-center text-2xl animate-pulse text-indigo-400">
-                  {callType === 'audio' && remoteAudioReceived ? '🎙️' : '👤'}
+                <div className={`w-16 h-16 mx-auto rounded-full flex items-center justify-center text-2xl animate-pulse transition-all duration-700 ${theme.avatarBg}`}>
+                  {callType === 'audio' && remoteAudioReceived ? theme.icon : '👤'}
                 </div>
                 <p className="text-sm font-semibold text-slate-300">{receiverEmail}</p>
                 <p className="text-xs text-slate-500">
@@ -1041,7 +1165,7 @@ export function ActiveCallRoom({
           </div>
 
           {/* Mon flux vidéo local */}
-          <div className="relative bg-slate-900 rounded-2xl overflow-hidden border border-slate-800 h-52 sm:h-64 md:h-72 max-h-[46vh] flex items-center justify-center shadow-lg">
+          <div className={`relative bg-slate-900/90 rounded-2xl overflow-hidden border ${theme.videoBorder} ${theme.videoGlow} h-52 sm:h-64 md:h-72 max-h-[46vh] flex items-center justify-center shadow-lg transition-all duration-700`}>
             {callType === 'video' && !camOff && hasLocalVideo ? (
               <video
                 ref={localVideoRef}
@@ -1052,8 +1176,8 @@ export function ActiveCallRoom({
               />
             ) : (
               <div className="text-center p-6 space-y-2">
-                <div className="w-14 h-14 mx-auto rounded-full bg-slate-800 flex items-center justify-center text-xl text-slate-400">
-                  🎙️
+                <div className={`w-14 h-14 mx-auto rounded-full flex items-center justify-center text-xl transition-all duration-700 ${theme.avatarBg}`}>
+                  {callType === 'audio' ? theme.icon : '🎙️'}
                 </div>
                 <p className="text-xs text-slate-400">
                   {callType === 'audio'

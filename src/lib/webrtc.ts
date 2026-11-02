@@ -10,7 +10,8 @@ export type SignalType =
   | 'offer'
   | 'answer'
   | 'ice-candidate'
-  | 'peer-ready';
+  | 'peer-ready'
+  | 'ambience-changed';
 
 export type SignalData = {
   type: SignalType;
