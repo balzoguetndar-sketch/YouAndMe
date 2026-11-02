@@ -13,7 +13,7 @@ export async function proxy(request: NextRequest) {
   const rawEmail = rawCookieEmail ? decodeURIComponent(rawCookieEmail) : '';
 
   // Validation stricte de l'adresse e-mail
-  const { isValid, cleanEmail } = validateEmail(rawEmail);
+  const { isValid } = validateEmail(rawEmail);
 
   const pathname = request.nextUrl.pathname;
   const isLoginPage = pathname === '/login';
@@ -25,7 +25,7 @@ export async function proxy(request: NextRequest) {
   // Proxy check is a fast gate; the page and admin APIs verify the signed session too.
   if (isAdminRoute) {
     const adminEmail = await verifyAdminSessionToken(request.cookies.get(ADMIN_SESSION_COOKIE)?.value);
-    if (!adminEmail || !isValid || cleanEmail !== adminEmail) {
+    if (!adminEmail) {
       return NextResponse.redirect(new URL('/login', request.url));
     }
     return response;

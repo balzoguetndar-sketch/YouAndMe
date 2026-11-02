@@ -1,8 +1,68 @@
+import os from 'node:os';
 import { createClient } from '@supabase/supabase-js';
 import { NextResponse } from 'next/server';
 import { validateEmail } from '@/src/lib/validation';
 
 const HANDOFF_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function getDynamicLanOrigin(port = 3000): string | null {
+  try {
+    const interfaces = os.networkInterfaces();
+    // 1. Chercher d'abord sur une interface physique Wi-Fi ou Ethernet avec une IP LAN standard (192.168.x.x)
+    for (const [name, addrs] of Object.entries(interfaces)) {
+      const lowerName = name.toLowerCase();
+      if (
+        lowerName.includes('tun') ||
+        lowerName.includes('tap') ||
+        lowerName.includes('vpn') ||
+        lowerName.includes('docker') ||
+        lowerName.includes('wsl') ||
+        lowerName.includes('vethernet') ||
+        lowerName.includes('loopback')
+      ) {
+        continue;
+      }
+      for (const iface of addrs || []) {
+        if (
+          iface.family === 'IPv4' &&
+          !iface.internal &&
+          iface.mac !== '00:00:00:00:00:00' &&
+          iface.netmask !== '255.255.255.255' &&
+          iface.address.startsWith('192.168.')
+        ) {
+          return `http://${iface.address}:${port}`;
+        }
+      }
+    }
+
+    // 2. Chercher sur toute interface physique non-VPN avec IP privée
+    for (const [name, addrs] of Object.entries(interfaces)) {
+      const lowerName = name.toLowerCase();
+      if (
+        lowerName.includes('tun') ||
+        lowerName.includes('tap') ||
+        lowerName.includes('vpn') ||
+        lowerName.includes('docker') ||
+        lowerName.includes('wsl') ||
+        lowerName.includes('vethernet') ||
+        lowerName.includes('loopback')
+      ) {
+        continue;
+      }
+      for (const iface of addrs || []) {
+        if (
+          iface.family === 'IPv4' &&
+          !iface.internal &&
+          iface.mac !== '00:00:00:00:00:00' &&
+          iface.netmask !== '255.255.255.255'
+        ) {
+          return `http://${iface.address}:${port}`;
+        }
+      }
+    }
+  } catch {}
+  return null;
+}
 
 async function sendMagicLinkEmail(email: string, actionLink: string): Promise<void> {
   const apiKey = process.env.RESEND_API_KEY;
@@ -73,35 +133,53 @@ export async function POST(request: Request) {
     const adminSupabase = createClient(supabaseUrl, serviceRoleKey, {
       auth: { persistSession: false, autoRefreshToken: false },
     });
-    const requestOrigin = new URL(request.url).origin;
-    const redirectOrigin = process.env.NODE_ENV === 'development'
-      ? process.env.LOCAL_APP_URL || requestOrigin
-      : requestOrigin;
+    const requestUrl = new URL(request.url);
+    const requestPort = Number(requestUrl.port) || 3000;
+    const dynamicLan = getDynamicLanOrigin(requestPort);
 
-    const redirectUrl = new URL('/verify', redirectOrigin);
-    redirectUrl.searchParams.set('next', '/');
-    redirectUrl.searchParams.set('handoff', handoffId);
+    // En développement, détection dynamique automatique de l'IP du Wi-Fi/Hotspot
+    // pour garantir que le lien cliqué sur mobile joigne TOUJOURS la bonne machine.
+    const appOrigin = process.env.NODE_ENV === 'development'
+      ? (dynamicLan || process.env.LOCAL_APP_URL || requestUrl.origin)
+      : requestUrl.origin;
+
     const { data, error } = await adminSupabase.auth.admin.generateLink({
       email: validatedEmail,
       type: 'magiclink',
-      options: { redirectTo: redirectUrl.toString() },
     });
 
     if (error) {
       console.error('[Magic Link] Génération du lien échouée :', error.message);
+      const isRateLimit = error.message.toLowerCase().includes('security') ||
+        error.message.toLowerCase().includes('rate') ||
+        error.message.toLowerCase().includes('wait') ||
+        error.message.toLowerCase().includes('second');
+      const userMessage = isRateLimit
+        ? 'Par mesure de sécurité, veuillez patienter une minute avant de redemander un lien magique.'
+        : (error.message || 'Impossible de générer le lien magique.');
       return NextResponse.json(
-        { error: 'Impossible de générer le lien magique.' },
+        { error: userMessage },
         { status: 502 }
       );
     }
 
-    const actionLink = data?.properties?.action_link;
-    if (!actionLink) {
+    // On utilise hashed_token pour construire notre propre URL de vérification
+    // qui pointe DIRECTEMENT vers notre app (sans passer par Supabase GOTRUE_SITE_URL).
+    const hashedToken = data?.properties?.hashed_token;
+    if (!hashedToken) {
       return NextResponse.json(
-        { error: 'Le lien magique n’a pas été généré.' },
+        { error: "Le lien magique n'a pas été généré." },
         { status: 502 }
       );
     }
+
+    const verifyUrl = new URL('/verify', appOrigin);
+    verifyUrl.searchParams.set('token_hash', hashedToken);
+    verifyUrl.searchParams.set('type', 'magiclink');
+    verifyUrl.searchParams.set('next', '/');
+    verifyUrl.searchParams.set('handoff', handoffId);
+
+    const actionLink = verifyUrl.toString();
 
     try {
       await sendMagicLinkEmail(validatedEmail, actionLink);

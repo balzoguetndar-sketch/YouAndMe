@@ -1,21 +1,23 @@
-import { createHmac } from 'node:crypto';
-
-const MASKED_IP = 'Masqué';
-
 export function getPrivacySafeIp(request: Request): string {
   const forwardedFor = request.headers.get('x-forwarded-for');
   const forwardedIp = forwardedFor?.split(',')[0]?.trim();
   const realIp = request.headers.get('x-real-ip')?.trim();
-  const clientIp = forwardedIp || realIp;
+  const cfConnectingIp = request.headers.get('cf-connecting-ip')?.trim();
+  let clientIp = forwardedIp || realIp || cfConnectingIp || '127.0.0.1';
 
-  if (!clientIp || !process.env.IP_MASKING_SECRET) {
-    return MASKED_IP;
+  if (clientIp === '::1' || clientIp === '::ffff:127.0.0.1') {
+    clientIp = '127.0.0.1';
   }
 
-  const signingKey = process.env.IP_MASKING_SECRET;
-  return createHmac('sha256', signingKey).update(clientIp).digest('hex');
+  return clientIp;
+}
+
+export function formatIpDisplay(ip: string | null | undefined): string {
+  if (!ip || ip === 'Masqué') return 'Non renseignée';
+  if (ip === '127.0.0.1' || ip === 'localhost') return '127.0.0.1 (Local)';
+  return ip;
 }
 
 export function getMaskedIpLabel(): string {
-  return MASKED_IP;
+  return 'Non renseignée';
 }

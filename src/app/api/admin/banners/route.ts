@@ -1,7 +1,10 @@
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
+import dns from 'dns/promises';
 import { createClient } from '@supabase/supabase-js';
 import { ADMIN_SESSION_COOKIE, verifyAdminSessionToken } from '@/src/lib/adminAuth';
+import { validateEmail } from '@/src/lib/validation';
+import { isDisposableDomain } from '@/src/lib/disposableDomains';
 
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -50,11 +53,49 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Informations de bannière invalides.' }, { status: 400 });
     }
 
+    // 1. Validation syntaxique stricte de l'e-mail de l'annonceur
+    const { isValid, cleanEmail, error: valError } = validateEmail(body.advertiser_email);
+    if (!isValid || !cleanEmail) {
+      return NextResponse.json(
+        { error: valError || 'Adresse e-mail de l’annonceur invalide.' },
+        { status: 400 }
+      );
+    }
+
+    const domain = cleanEmail.split('@')[1];
+
+    // 2. Blocage des domaines jetables / temporaires (>3000 domaines)
+    if (isDisposableDomain(domain)) {
+      return NextResponse.json(
+        { error: '🚫 Les adresses e-mails temporaires, jetables ou anonymes sont strictement interdites pour les annonceurs.' },
+        { status: 400 }
+      );
+    }
+
+    // 3. Vérification DNS en temps réel de l'existence des serveurs MX du domaine
+    try {
+      const mxRecords = await dns.resolveMx(domain);
+      if (!mxRecords || mxRecords.length === 0) {
+        const aRecords = await dns.resolve4(domain);
+        if (!aRecords || aRecords.length === 0) {
+          return NextResponse.json(
+            { error: `Le nom de domaine "@${domain}" ne possède aucun serveur de messagerie valide.` },
+            { status: 400 }
+          );
+        }
+      }
+    } catch {
+      return NextResponse.json(
+        { error: `Impossible de vérifier le domaine de messagerie "@${domain}". Vérifiez l'adresse saisie.` },
+        { status: 400 }
+      );
+    }
+
     const { data, error } = await supabaseAdmin.from('banners').insert([{
       title: body.title.trim(),
       image_url: body.image_url,
       target_url: typeof body.target_url === 'string' ? body.target_url : '#',
-      advertiser_email: body.advertiser_email.trim().toLowerCase(),
+      advertiser_email: cleanEmail,
       duration_type: body.duration_type,
       duration_value: body.duration_value,
       amount_due: body.amount_due,

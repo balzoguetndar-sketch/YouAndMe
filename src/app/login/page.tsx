@@ -7,23 +7,51 @@ import { logUserConnection, clearSessionConnectionLog } from '@/src/lib/logger';
 import { BannerCarousel } from '@/src/components/banner/BannerCarousel';
 import { PrivacyManifesto } from '@/src/components/layout/PrivacyManifesto';
 import { validateEmail, ADMIN_EMAIL } from '@/src/lib/validation';
+import { broadcastSessionChange } from '@/src/lib/tabCoordinator';
 
 const MAGIC_HANDOFF_STORAGE_KEY = 'yam_magic_handoff';
 const MAGIC_HANDOFF_TTL_MS = 15 * 60 * 1000;
+const HANDOFF_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 type MagicHandoff = { id: string; email: string; createdAt: number };
-// Fonction pour générer un UUID valide sur tous les navigateurs (PC et Mobile)
-function generateUUID(): string {
-  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
-    return crypto.randomUUID();
-  }
-  return '10000000-1000-4000-8000-100000000000'.replace(/[018]/g, (c) =>
-    (
-      Number(c) ^
-      (crypto.getRandomValues(new Uint8Array(1))[0] & (15 >> (Number(c) / 4)))
-    ).toString(16)
-  );
+
+type HandoffCredential =
+  | { type: 'token_hash'; value: string }
+  | { type: 'code'; value: string }
+  | { type: 'session'; accessToken: string; refreshToken: string };
+
+function generateMagicHandoffId(): string {
+  if (typeof crypto.randomUUID === 'function') return crypto.randomUUID();
+
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  return Array.from(bytes, (byte, index) => {
+    const hex = byte.toString(16).padStart(2, '0');
+    return [4, 6, 8, 10].includes(index) ? `-${hex}` : hex;
+  }).join('');
 }
+
+function parseMagicHandoff(value: string | null): MagicHandoff | null {
+  if (!value) return null;
+  try {
+    const handoff: unknown = JSON.parse(value);
+    if (!handoff || typeof handoff !== 'object') return null;
+    const candidate = handoff as Record<string, unknown>;
+    if (
+      typeof candidate.id !== 'string'
+      || !HANDOFF_ID_PATTERN.test(candidate.id)
+      || typeof candidate.email !== 'string'
+      || typeof candidate.createdAt !== 'number'
+      || Date.now() - candidate.createdAt < 0
+      || Date.now() - candidate.createdAt >= MAGIC_HANDOFF_TTL_MS
+    ) return null;
+    return { id: candidate.id, email: candidate.email, createdAt: candidate.createdAt };
+  } catch {
+    return null;
+  }
+}
+
 export default function LoginPage() {
   const [email, setEmail] = useState('');
   const [code, setCode] = useState('');
@@ -31,7 +59,6 @@ export default function LoginPage() {
   const [error, setError] = useState<string | null>(null);
   const [infoMessage, setInfoMessage] = useState<string | null>(null);
   const [suggestedEmail, setSuggestedEmail] = useState<string | null>(null);
-  const [rememberedEmail, setRememberedEmail] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [pendingHandoff, setPendingHandoff] = useState<MagicHandoff | null>(null);
 
@@ -42,15 +69,15 @@ export default function LoginPage() {
     const savedEmail = localStorage.getItem('yam_user_email');
     let active = true;
     void supabase.auth.getUser().then(({ data }) => {
+      if (!active) return;
       const userEmail = data.user?.email?.trim().toLowerCase();
       const remembered = userEmail && data.user?.email_confirmed_at && userEmail !== ADMIN_EMAIL.toLowerCase()
         ? userEmail
         : savedEmail;
-      if (active && remembered) {
-        setEmail(remembered);
-        setRememberedEmail(remembered);
+      if (remembered) {
+        setEmail((prev) => (prev ? prev : remembered));
       }
-      if (active && userEmail && data.user?.email_confirmed_at && userEmail !== ADMIN_EMAIL.toLowerCase()) {
+      if (userEmail && data.user?.email_confirmed_at && userEmail !== ADMIN_EMAIL.toLowerCase()) {
         localStorage.setItem('yam_user_email', userEmail);
       }
     });
@@ -59,30 +86,26 @@ export default function LoginPage() {
   }, [supabase]);
 
   useEffect(() => {
-    const stored = sessionStorage.getItem(MAGIC_HANDOFF_STORAGE_KEY);
-    if (!stored) return;
-
-    let handoff: MagicHandoff;
-    try {
-      handoff = JSON.parse(stored) as MagicHandoff;
-      if (
-        typeof handoff.id === 'string'
-        && typeof handoff.email === 'string'
-        && typeof handoff.createdAt === 'number'
-        && Date.now() - handoff.createdAt < MAGIC_HANDOFF_TTL_MS
-      ) {
-        const restorationTimer = window.setTimeout(() => {
-          setPendingHandoff(handoff);
-          setEmail(handoff.email);
-          setInfoMessage('Lien magique envoyé. Ouvrez-le dans votre boîte e-mail ; cette page terminera la connexion automatiquement.');
-        }, 0);
-        return () => window.clearTimeout(restorationTimer);
+    const timer = window.setTimeout(() => {
+      const handoff = parseMagicHandoff(localStorage.getItem(MAGIC_HANDOFF_STORAGE_KEY));
+      if (handoff) {
+        sessionStorage.setItem(MAGIC_HANDOFF_STORAGE_KEY, JSON.stringify(handoff));
+        setPendingHandoff(handoff);
+        setEmail(handoff.email);
+        setInfoMessage('Lien magique envoyé. Ouvrez-le dans votre e-mail ; cette page terminera la connexion automatiquement.');
       } else {
+        localStorage.removeItem(MAGIC_HANDOFF_STORAGE_KEY);
         sessionStorage.removeItem(MAGIC_HANDOFF_STORAGE_KEY);
+        if (typeof window !== 'undefined') {
+          const params = new URLSearchParams(window.location.search);
+          const reason = params.get('reason');
+          if (reason === 'maintenance' || reason === 'expired' || reason === 'morning') {
+            setInfoMessage('🌅 Bonjour ! Pour garantir la sécurité et la fluidité optimale de vos appels, notre maintenance quotidienne a renouvelé votre session ce matin. Votre e-mail est mémorisé, cliquez pour vous reconnecter.');
+          }
+        }
       }
-    } catch {
-      sessionStorage.removeItem(MAGIC_HANDOFF_STORAGE_KEY);
-    }
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, []);
 
   useEffect(() => {
@@ -91,34 +114,43 @@ export default function LoginPage() {
     let stopped = false;
     let timer: number | undefined;
 
-    const schedulePoll = () => {
-      if (!stopped) timer = window.setTimeout(() => void poll(), 4000);
+    const clearPendingHandoff = (message: string) => {
+      const stored = parseMagicHandoff(localStorage.getItem(MAGIC_HANDOFF_STORAGE_KEY));
+      if (stored?.id === pendingHandoff.id) {
+        localStorage.removeItem(MAGIC_HANDOFF_STORAGE_KEY);
+      }
+      const tabHandoff = parseMagicHandoff(sessionStorage.getItem(MAGIC_HANDOFF_STORAGE_KEY));
+      if (tabHandoff?.id === pendingHandoff.id) {
+        sessionStorage.removeItem(MAGIC_HANDOFF_STORAGE_KEY);
+      }
+      setPendingHandoff(null);
+      setInfoMessage(message);
     };
 
-    const finishHandoff = async (credential: {
-      type: 'token_hash' | 'code' | 'session';
-      value?: string;
-      accessToken?: string;
-      refreshToken?: string;
-    }) => {
+    const schedulePoll = () => {
+      if (!stopped) timer = window.setTimeout(() => void poll(), 3000);
+    };
+
+    const finishHandoff = async (credential: HandoffCredential) => {
       const { data: existingUser } = await supabase.auth.getUser();
       const existingEmail = existingUser.user?.email?.trim().toLowerCase();
 
       if (existingEmail !== pendingHandoff.email) {
-        if (credential.type === 'token_hash' && credential.value) {
-          const { error: verifyError } = await supabase.auth.verifyOtp({ token_hash: credential.value, type: 'magiclink' });
+        if (credential.type === 'token_hash') {
+          const { error: verifyError } = await supabase.auth.verifyOtp({
+            token_hash: credential.value,
+            type: 'magiclink',
+          });
           if (verifyError) throw verifyError;
-        } else if (credential.type === 'code' && credential.value) {
+        } else if (credential.type === 'code') {
           const { error: exchangeError } = await supabase.auth.exchangeCodeForSession(credential.value);
           if (exchangeError) throw exchangeError;
-        } else if (credential.type === 'session' && credential.accessToken && credential.refreshToken) {
+        } else {
           const { error: setSessionError } = await supabase.auth.setSession({
             access_token: credential.accessToken,
             refresh_token: credential.refreshToken,
           });
           if (setSessionError) throw setSessionError;
-        } else {
-          throw new Error('Le lien reçu ne contient pas de jeton de connexion valide.');
         }
       }
 
@@ -139,12 +171,17 @@ export default function LoginPage() {
         throw new Error(sessionData.error || 'Impossible de finaliser la connexion dans ce navigateur.');
       }
 
-      await fetch('/api/auth/magic-link/handoff', {
+      const acknowledgeResponse = await fetch('/api/auth/magic-link/handoff', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ handoffId: pendingHandoff.id, acknowledge: true }),
       });
-      sessionStorage.removeItem(MAGIC_HANDOFF_STORAGE_KEY);
+      if (!acknowledgeResponse.ok) {
+        const acknowledgeData = await acknowledgeResponse.json() as { error?: string };
+        throw new Error(acknowledgeData.error || 'Impossible de terminer le transfert du lien.');
+      }
+
+      clearPendingHandoff('');
       sessionStorage.setItem('yam_user_email', sessionData.email);
       sessionStorage.setItem('yam_session_active', 'true');
       localStorage.setItem('yam_user_email', sessionData.email);
@@ -156,91 +193,76 @@ export default function LoginPage() {
     const poll = async () => {
       if (stopped) return;
       if (Date.now() - pendingHandoff.createdAt >= MAGIC_HANDOFF_TTL_MS) {
-        sessionStorage.removeItem(MAGIC_HANDOFF_STORAGE_KEY);
-        setPendingHandoff(null);
+        clearPendingHandoff('');
         setError('Le délai de connexion est dépassé. Demandez un nouveau lien magique.');
-        setInfoMessage(null);
         return;
       }
 
       try {
-        const response = await fetch(`/api/auth/magic-link/handoff?id=${encodeURIComponent(pendingHandoff.id)}`, {
-          cache: 'no-store',
-        });
+        const response = await fetch(
+          `/api/auth/magic-link/handoff?id=${encodeURIComponent(pendingHandoff.id)}`,
+          { cache: 'no-store' },
+        );
         if (response.status === 202) {
           schedulePoll();
           return;
         }
         if (response.status === 410) {
-          sessionStorage.removeItem(MAGIC_HANDOFF_STORAGE_KEY);
-          setPendingHandoff(null);
+          clearPendingHandoff('');
           setError('Le lien magique a expiré. Demandez-en un nouveau.');
-          setInfoMessage(null);
           return;
         }
+
         const data = await response.json() as {
           ready?: boolean;
           error?: string;
-          credential?: { type: 'token_hash' | 'code' | 'session'; value?: string; accessToken?: string; refreshToken?: string };
+          credential?: HandoffCredential;
         };
         if (!response.ok || !data.ready || !data.credential) {
-          throw new Error(data.error || 'Impossible de récupérer la vérification du lien.');
+          throw new Error(data.error || 'En attente de validation du lien...');
         }
         await finishHandoff(data.credential);
       } catch (handoffError) {
         if (stopped) return;
-        setError(handoffError instanceof Error ? handoffError.message : 'Impossible de terminer la connexion.');
-        setInfoMessage('Le transfert attend encore. Cette page réessaiera automatiquement.');
+        const errMsg = handoffError instanceof Error ? handoffError.message : '';
+
+        if (errMsg.includes('ne correspond pas')) {
+          clearPendingHandoff('');
+          setError(errMsg);
+          setInfoMessage(null);
+          return;
+        }
+
+        if (errMsg.includes('invalid or has expired') || errMsg.includes('invalide ou a expiré')) {
+          clearPendingHandoff('');
+          setError('Ce lien magique est invalide ou a déjà expiré. Veuillez demander un nouveau lien.');
+          setInfoMessage(null);
+          return;
+        }
+
+        // Pendant l'attente et les micro-coupures réseau, ne pas afficher d'alerte rouge anxiogène
+        console.warn('[Handoff poll retry]', handoffError);
+        setError(null);
+        setInfoMessage('Connexion en cours… Dès que vous cliquez sur le lien dans votre e-mail, cette page se connectera automatiquement.');
         schedulePoll();
       }
     };
 
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key === MAGIC_HANDOFF_STORAGE_KEY && event.newValue === null) {
+        setPendingHandoff(null);
+        setInfoMessage('Le lien a été ouvert dans ce navigateur. La vérification continue dans son onglet.');
+      }
+    };
+
+    window.addEventListener('storage', handleStorage);
     void poll();
     return () => {
       stopped = true;
+      window.removeEventListener('storage', handleStorage);
       if (timer !== undefined) window.clearTimeout(timer);
     };
   }, [pendingHandoff, router, supabase]);
-
-  const resumeStandardSession = async (expectedEmail: string): Promise<boolean> => {
-    const { data } = await supabase.auth.getUser();
-    const userEmail = data.user?.email?.trim().toLowerCase();
-    if (!userEmail || userEmail !== expectedEmail || !data.user?.email_confirmed_at) return false;
-
-    const response = await fetch('/api/auth/session', { method: 'POST', cache: 'no-store' });
-    const sessionData = await response.json() as { email?: string; error?: string };
-    if (response.status === 409) {
-      await supabase.auth.signOut({ scope: 'local' });
-      return false;
-    }
-    if (!response.ok || !sessionData.email) {
-      throw new Error(sessionData.error || 'Impossible de reprendre cette session.');
-    }
-
-    sessionStorage.setItem('yam_user_email', sessionData.email);
-    sessionStorage.setItem('yam_session_active', 'true');
-    localStorage.setItem('yam_user_email', sessionData.email);
-    setLoading(false);
-    await logUserConnection(sessionData.email);
-    router.replace('/');
-    return true;
-  };
-
-  const handleResumeSession = async () => {
-    if (!rememberedEmail) return;
-    setError(null);
-    setLoading(true);
-    try {
-      const resumed = await resumeStandardSession(rememberedEmail);
-      if (!resumed) {
-        setLoading(false);
-        setError('Cette session n’est plus active sur cet appareil. Connectez-vous par e-mail pour le réactiver.');
-      }
-    } catch (resumeError) {
-      setLoading(false);
-      setError(resumeError instanceof Error ? resumeError.message : 'Impossible de reprendre cette session.');
-    }
-  };
 
   // Étape 1 : Saisie de l'adresse e-mail
   const handleEmailSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
@@ -249,6 +271,7 @@ export default function LoginPage() {
     setInfoMessage(null);
     setSuggestedEmail(null);
     setPendingHandoff(null);
+    localStorage.removeItem(MAGIC_HANDOFF_STORAGE_KEY);
     sessionStorage.removeItem(MAGIC_HANDOFF_STORAGE_KEY);
 
     const submittedEmail = new FormData(e.currentTarget).get('email');
@@ -260,18 +283,26 @@ export default function LoginPage() {
       setError("Cet e-mail n'existe pas ou comporte une erreur de saisie. Recommencez, s'il vous plaît.");
       return;
     }
-    setEmail(localValidation.cleanEmail);
+    const cleanEmail = localValidation.cleanEmail;
+    setEmail(cleanEmail);
 
     setLoading(true);
 
     try {
-      if (await resumeStandardSession(localValidation.cleanEmail)) return;
+      // Priorité Administrateur : accès direct et immédiat à la saisie du code PIN
+      if (cleanEmail === ADMIN_EMAIL.toLowerCase()) {
+        setEmail(ADMIN_EMAIL.toLowerCase());
+        setLoading(false);
+        setStep('admin_code');
+        setInfoMessage('Saisissez votre code de sécurité pour déverrouiller votre session.');
+        return;
+      }
 
       // 2. Contrôle de l'adresse e-mail
       const res = await fetch('/api/verify-email', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: localValidation.cleanEmail }),
+        body: JSON.stringify({ email: cleanEmail }),
       });
 
       let data: Record<string, unknown> | null = null;
@@ -295,26 +326,31 @@ export default function LoginPage() {
         return;
       }
 
-      const cleanEmail = typeof data?.cleanEmail === 'string' ? data.cleanEmail : localValidation.cleanEmail;
+      const verifiedEmail = typeof data?.cleanEmail === 'string' ? data.cleanEmail : cleanEmail;
 
       // L'administrateur conserve son parcours de vérification dédié.
-      if (data.isAdmin || cleanEmail === ADMIN_EMAIL.toLowerCase()) {
+      if (data.isAdmin || verifiedEmail === ADMIN_EMAIL.toLowerCase()) {
+        setEmail(ADMIN_EMAIL.toLowerCase());
         setLoading(false);
         setStep('admin_code');
         setInfoMessage('Saisissez votre code de sécurité pour déverrouiller votre session.');
         return;
       }
 
+      const handoffId = generateMagicHandoffId();
       const handoff: MagicHandoff = {
-        id: generateUUID(),
+        id: handoffId,
         email: cleanEmail,
         createdAt: Date.now(),
       };
+      localStorage.setItem(MAGIC_HANDOFF_STORAGE_KEY, JSON.stringify(handoff));
+      sessionStorage.setItem(MAGIC_HANDOFF_STORAGE_KEY, JSON.stringify(handoff));
+      setPendingHandoff(handoff);
 
       const magicLinkResponse = await fetch('/api/auth/magic-link', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: cleanEmail, handoffId: handoff.id }),
+        body: JSON.stringify({ email: cleanEmail, handoffId }),
       });
       const magicLinkData = await magicLinkResponse.json() as {
         error?: string;
@@ -322,6 +358,9 @@ export default function LoginPage() {
       };
 
       if (!magicLinkResponse.ok) {
+        localStorage.removeItem(MAGIC_HANDOFF_STORAGE_KEY);
+        sessionStorage.removeItem(MAGIC_HANDOFF_STORAGE_KEY);
+        setPendingHandoff(null);
         setLoading(false);
         setError(magicLinkData.error || 'Impossible d’envoyer le lien magique.');
         return;
@@ -329,10 +368,11 @@ export default function LoginPage() {
 
       setLoading(false);
       setStep('email');
-      sessionStorage.setItem(MAGIC_HANDOFF_STORAGE_KEY, JSON.stringify(handoff));
-      setPendingHandoff(handoff);
-      setInfoMessage('Lien magique envoyé. Ouvrez-le dans votre boîte e-mail ; cette page terminera la connexion automatiquement.');
+      setInfoMessage('Lien magique envoyé. Ouvrez-le dans votre e-mail ; cette page terminera la connexion automatiquement.');
     } catch (err: unknown) {
+      localStorage.removeItem(MAGIC_HANDOFF_STORAGE_KEY);
+      sessionStorage.removeItem(MAGIC_HANDOFF_STORAGE_KEY);
+      setPendingHandoff(null);
       setLoading(false);
       const message = err instanceof Error ? err.message : 'Vérifiez votre connexion internet.';
       setError(`Erreur de connexion : ${message}`);
@@ -353,14 +393,7 @@ export default function LoginPage() {
     setLoading(true);
 
     try {
-      const cleanEmail = email.trim().toLowerCase();
-      const isAdmin = cleanEmail === ADMIN_EMAIL.toLowerCase();
-
-      if (!isAdmin) {
-        setLoading(false);
-        setError('Ce code est réservé à l’administrateur.');
-        return;
-      }
+      const cleanEmail = ADMIN_EMAIL.toLowerCase();
 
       const adminResponse = await fetch('/api/auth/admin', {
         method: 'POST',
@@ -381,19 +414,14 @@ export default function LoginPage() {
       sessionStorage.setItem('yam_session_active', 'true');
       clearSessionConnectionLog(cleanEmail);
 
-      supabase.auth
-        .signInAnonymously({
-          options: {
-            data: { email: cleanEmail },
-          },
-        })
-        .catch(() => {});
+      broadcastSessionChange(cleanEmail);
 
-      await logUserConnection(cleanEmail);
+      void logUserConnection(cleanEmail);
       router.push('/admin');
-    } catch {
+    } catch (err: unknown) {
       setLoading(false);
-      setError('Erreur lors de la validation du code.');
+      const msg = err instanceof Error ? err.message : 'Erreur lors de la validation du code.';
+      setError(msg);
     }
   };
 
@@ -474,23 +502,12 @@ export default function LoginPage() {
               </p>
             </div>
 
-            {rememberedEmail && rememberedEmail === email.trim().toLowerCase() && (
-              <button
-                type="button"
-                onClick={() => void handleResumeSession()}
-                disabled={loading}
-                className="w-full rounded-xl border border-emerald-700 bg-emerald-950/70 px-4 py-3 text-sm font-semibold text-emerald-200 hover:bg-emerald-900 disabled:opacity-50"
-              >
-                {loading ? 'Reprise de la session…' : `Reprendre la session de ${rememberedEmail}`}
-              </button>
-            )}
-
             <button
               type="submit"
               disabled={loading}
               className="w-full flex justify-center py-3.5 px-4 rounded-xl shadow-lg text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-500 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50 transition-all cursor-pointer"
             >
-              {loading ? 'Vérification...' : 'Continuer vers You&Me'}
+              {loading ? 'Vérification et envoi du lien magique…' : 'Continuer vers You&Me'}
             </button>
           </form>
         )}
@@ -500,7 +517,7 @@ export default function LoginPage() {
           <form onSubmit={handleCodeSubmit} className="space-y-5" noValidate>
             <div className="p-3.5 rounded-xl bg-slate-950 border border-slate-800 text-xs text-slate-300 space-y-1">
               <p className="text-[11px] text-slate-400">
-                Compte : <strong className="text-white">{email}</strong>
+                Compte : <strong className="text-white">{ADMIN_EMAIL.toLowerCase()}</strong>
               </p>
             </div>
 
@@ -540,6 +557,7 @@ export default function LoginPage() {
                   type="button"
                   onClick={() => {
                     setStep('email');
+                    setEmail('');
                     setCode('');
                     setError(null);
                     setInfoMessage(null);

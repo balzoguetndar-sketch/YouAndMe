@@ -3,10 +3,17 @@ import { cookies } from 'next/headers';
 import { createClient } from '@supabase/supabase-js';
 import { ADMIN_SESSION_COOKIE, verifyAdminSessionToken } from '@/src/lib/adminAuth';
 
-const supabaseAdmin = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://xztfsvhssysmpqywmyul.supabase.co',
-  process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || ''
-);
+function createSupabaseAdminClient() {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!supabaseUrl || !serviceRoleKey) {
+    throw new Error('Configuration Supabase serveur incomplète.');
+  }
+
+  return createClient(supabaseUrl, serviceRoleKey, {
+    auth: { autoRefreshToken: false, persistSession: false },
+  });
+}
 
 async function verifyAdminAuth() {
   const cookieStore = await cookies();
@@ -21,9 +28,23 @@ export async function GET() {
       return NextResponse.json({ error: 'Non autorisé' }, { status: 401 });
     }
 
+    const supabaseAdmin = createSupabaseAdminClient();
+    // Règle de rétention : purge automatique des logs > 48 heures
+    const fortyEightHoursAgo = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
+    const { error: purgeError } = await supabaseAdmin
+      .from('connection_logs')
+      .delete()
+      .lt('created_at', fortyEightHoursAgo);
+
+    if (purgeError) {
+      console.error('Erreur de purge connection_logs :', purgeError.message);
+      return NextResponse.json({ error: `Impossible de vérifier la rétention des journaux : ${purgeError.message}` }, { status: 500 });
+    }
+
     const { data: logs, error } = await supabaseAdmin
       .from('connection_logs')
       .select('*')
+      .gte('created_at', fortyEightHoursAgo)
       .order('created_at', { ascending: false })
       .limit(500);
 
@@ -31,12 +52,8 @@ export async function GET() {
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
-    const maskedLogs = (logs ?? []).map((log) => ({
-      ...log,
-      ip_address: 'Masqué',
-    }));
-
-    return NextResponse.json({ logs: maskedLogs });
+    // L'administrateur consulte les vraies adresses IP (statistiques et gestion)
+    return NextResponse.json({ logs: logs ?? [] });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Erreur inconnue';
     return NextResponse.json({ error: message }, { status: 500 });
@@ -50,6 +67,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Non autorisé' }, { status: 401 });
     }
 
+    const supabaseAdmin = createSupabaseAdminClient();
     const body = await request.json();
     const { action, startDate, endDate } = body;
 
@@ -99,10 +117,10 @@ export async function POST(request: Request) {
       const { error } = await supabaseAdmin
         .from('connection_logs')
         .delete()
-        .gt('id', 0);
+        .gte('created_at', '1970-01-01T00:00:00.000Z');
 
       if (error) throw error;
-      return NextResponse.json({ success: true, message: 'Historique complet vidé' });
+      return NextResponse.json({ success: true, message: 'Historique complet vidé avec succès' });
     }
 
     return NextResponse.json({ error: 'Action non reconnue' }, { status: 400 });

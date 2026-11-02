@@ -9,7 +9,7 @@ export type Contact = {
   created_at: string;
 };
 
-async function getAuthorizedClient() {
+async function getAuthorizedClient(expectedEmail?: string) {
   const supabase = await createClient();
   const { data: { user }, error } = await supabase.auth.getUser();
 
@@ -17,25 +17,38 @@ async function getAuthorizedClient() {
     throw new Error('Session utilisateur invalide.');
   }
 
-  return { supabase, user };
+  const authenticatedEmail = (user.email || user.user_metadata?.email || '').toLowerCase().trim();
+
+  if (expectedEmail) {
+    const cleanExpected = expectedEmail.toLowerCase().trim();
+    if (authenticatedEmail !== cleanExpected) {
+      throw new Error(`L’identité Supabase authentifiée (${authenticatedEmail}) ne correspond pas au compte actif (${cleanExpected}).`);
+    }
+  }
+
+  return { supabase, user, authenticatedEmail };
 }
 
-export async function getContacts(): Promise<Contact[]> {
-  const { supabase } = await getAuthorizedClient();
+export async function getContacts(expectedEmail?: string): Promise<{ contacts: Contact[]; userEmail: string }> {
+  const { supabase, user, authenticatedEmail } = await getAuthorizedClient(expectedEmail);
   const { data, error } = await supabase
     .from('contacts')
     .select('id, contact_email, created_at')
+    .eq('owner_id', user.id)
     .order('created_at', { ascending: false });
 
   if (error) {
     throw new Error('Impossible de charger votre carnet de contacts.');
   }
 
-  return (data ?? []) as Contact[];
+  return {
+    contacts: (data ?? []) as Contact[],
+    userEmail: authenticatedEmail,
+  };
 }
 
-export async function addContact(contactEmail: string): Promise<Contact> {
-  const { supabase, user } = await getAuthorizedClient();
+export async function addContact(contactEmail: string, expectedEmail?: string): Promise<Contact> {
+  const { supabase, user } = await getAuthorizedClient(expectedEmail);
 
   const { data, error } = await supabase
     .from('contacts')
@@ -53,11 +66,16 @@ export async function addContact(contactEmail: string): Promise<Contact> {
   return data as Contact;
 }
 
-export async function removeContact(contactId: string): Promise<void> {
-  const { supabase } = await getAuthorizedClient();
-  const { error } = await supabase.from('contacts').delete().eq('id', contactId);
+export async function removeContact(contactId: string, expectedEmail?: string): Promise<void> {
+  const { supabase, user } = await getAuthorizedClient(expectedEmail);
+  const { error } = await supabase
+    .from('contacts')
+    .delete()
+    .eq('id', contactId)
+    .eq('owner_id', user.id);
 
   if (error) {
     throw new Error('Impossible de supprimer ce contact.');
   }
 }
+

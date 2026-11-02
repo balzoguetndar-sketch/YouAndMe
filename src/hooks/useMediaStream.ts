@@ -1,45 +1,58 @@
 'use client';
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { isMediaPermissionError } from '@/src/lib/mediaPermissions';
-
-export const OPTIMIZED_AUDIO_CONSTRAINTS: MediaTrackConstraints = {
-  echoCancellation: true,
-  noiseSuppression: true,
-  autoGainControl: true,
-  sampleRate: { ideal: 48000 },
-  channelCount: { ideal: 2, min: 1 },
-};
-
-export const OPTIMIZED_VIDEO_CONSTRAINTS: MediaTrackConstraints = {
-  facingMode: 'user',
-  width: { ideal: 1280, min: 640 },
-  height: { ideal: 720, min: 480 },
-  frameRate: { ideal: 30, min: 15 },
-};
+import {
+  acquireHardwareLock,
+  releaseHardware,
+  registerActiveMediaStream,
+  initHardwareCoordinator,
+} from '@/src/lib/hardwareCoordinator';
+import {
+  CALL_AUDIO_CONSTRAINTS,
+  CALL_VIDEO_CONSTRAINTS,
+} from '@/src/lib/callMedia';
 
 export function useMediaStream() {
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
+  // Écoute de libération matérielle : si l'autre onglet est fermé, cet onglet peut reprendre le flux
+  useEffect(() => {
+    return initHardwareCoordinator((isNextEligible) => {
+      if (isNextEligible && !stream) {
+        // L'onglet précédent s'est fermé, la caméra et le micro sont libres
+        setError(null);
+      }
+    });
+  }, [stream]);
+
   const startStream = useCallback(async (video = true, audio = true) => {
     setLoading(true);
     setError(null);
+
+    // Règle 2 : Vérification du verrou exclusif matériel entre onglets
+    const hardwareType = video ? 'video_audio' : 'audio_only';
+    const lockAcquired = acquireHardwareLock(hardwareType);
+    if (!lockAcquired) {
+      setLoading(false);
+      setError('La caméra et le microphone sont actuellement utilisés par un autre onglet de votre navigateur. Dès que vous fermez cet onglet, les ressources seront automatiquement attribuées à cet onglet.');
+      return null;
+    }
 
     try {
       if (typeof navigator === 'undefined' || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
         throw new Error('L’accès aux caméras/micros requiert une connexion sécurisée HTTPS (ou localhost).');
       }
 
-
       let mediaStream: MediaStream | null = null;
 
       // Tentative 1 : Contraintes optimisées HD + Audio DSP anti-écho
       try {
         mediaStream = await navigator.mediaDevices.getUserMedia({
-          audio: audio ? OPTIMIZED_AUDIO_CONSTRAINTS : false,
-          video: video ? OPTIMIZED_VIDEO_CONSTRAINTS : false,
+          audio: audio ? CALL_AUDIO_CONSTRAINTS : false,
+          video: video ? CALL_VIDEO_CONSTRAINTS : false,
         });
       } catch (hdErr) {
         if (isMediaPermissionError(hdErr)) {
@@ -70,10 +83,12 @@ export function useMediaStream() {
 
       if (mediaStream) {
         setStream(mediaStream);
+        registerActiveMediaStream(mediaStream, hardwareType);
       }
       setLoading(false);
       return mediaStream;
     } catch (err: unknown) {
+      releaseHardware();
       setLoading(false);
       if (err instanceof Error) {
         if (isMediaPermissionError(err)) {
@@ -97,6 +112,7 @@ export function useMediaStream() {
       stream.getTracks().forEach((track) => track.stop());
       setStream(null);
     }
+    releaseHardware();
   }, [stream]);
 
   const toggleAudio = useCallback((enabled: boolean) => {

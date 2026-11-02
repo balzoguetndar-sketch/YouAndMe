@@ -58,6 +58,13 @@ export async function POST(request: Request) {
       path: '/',
       maxAge: ADMIN_SESSION_TTL_SECONDS,
     });
+    response.cookies.set('yam_user_email', ADMIN_EMAIL.toLowerCase(), {
+      httpOnly: false,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      path: '/',
+      maxAge: ADMIN_SESSION_TTL_SECONDS,
+    });
     return response;
   } catch {
     return NextResponse.json({ error: 'Impossible de vérifier la connexion administrateur.' }, { status: 400 });

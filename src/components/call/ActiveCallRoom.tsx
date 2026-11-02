@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { createClient } from '@/src/lib/supabase/clients';
 import { ICE_SERVERS, sendSignal, subscribeToSignals, SignalData } from '@/src/lib/webrtc';
 import { soundManager } from '@/src/lib/sound';
@@ -9,6 +9,16 @@ import { Whiteboard } from '@/src/components/collaboration/Whiteboard';
 import { FileShare } from '@/src/components/collaboration/FileShare';
 import { AudioLevelVisualizer } from '@/src/components/call/AudioLevelVisualizer';
 import { isMediaPermissionError } from '@/src/lib/mediaPermissions';
+import {
+  acquireHardwareLock,
+  releaseHardware,
+  registerActiveMediaStream,
+} from '@/src/lib/hardwareCoordinator';
+import {
+  CALL_AUDIO_CONSTRAINTS,
+  CALL_VIDEO_CONSTRAINTS,
+  configureCallSenderQuality,
+} from '@/src/lib/callMedia';
 import type { RealtimeChannel } from '@supabase/supabase-js';
 
 type WhiteboardOpenRequest = {
@@ -28,7 +38,7 @@ type ActiveCallRoomProps = {
   isInitiator?: boolean;
   callType: 'video' | 'audio';
   ambience: string;
-  onEndCall: () => void;
+  onEndCall: (notifyPeer?: boolean) => void;
 };
 
 export function ActiveCallRoom({
@@ -77,9 +87,51 @@ export function ActiveCallRoom({
     const saved = localStorage.getItem('yam_show_pricing_in_room');
     return saved === null ? true : saved === 'true';
   });
+  const onEndCallRef = useRef(onEndCall);
+  const callEndingRef = useRef(false);
 
   const supabase = createClient();
   const roomId = [callerEmail, receiverEmail].sort().join('__').replace(/[^a-zA-Z0-9_-]/g, '_');
+
+  useEffect(() => {
+    onEndCallRef.current = onEndCall;
+  }, [onEndCall]);
+
+  const finishCall = useCallback((notifyPeer: boolean) => {
+    if (callEndingRef.current) return;
+    callEndingRef.current = true;
+    soundManager.stop();
+
+    const localStream = localStreamRef.current;
+    localStreamRef.current = null;
+    localStream?.getTracks().forEach((track) => track.stop());
+
+    const pc = pcRef.current;
+    pcRef.current = null;
+    pc?.close();
+
+    const remoteStream = remoteStreamRef.current;
+    remoteStreamRef.current = null;
+    remoteStream?.getTracks().forEach((track) => track.stop());
+
+    if (localVideoRef.current) localVideoRef.current.srcObject = null;
+    if (remoteVideoRef.current) remoteVideoRef.current.srcObject = null;
+    if (remoteAudioRef.current) remoteAudioRef.current.srcObject = null;
+    releaseHardware();
+
+    if (notifyPeer) {
+      void sendSignal(receiverEmail, {
+        type: 'call-ended',
+        sender: callerEmail,
+        target: receiverEmail,
+        callId,
+      }).catch((error: unknown) => {
+        console.error('Erreur lors de la notification de fin d’appel :', error);
+      });
+    }
+
+    onEndCallRef.current(false);
+  }, [callerEmail, receiverEmail, callId]);
 
   // 1. Récupération & écoute en direct du réglage administrateur pour l'affichage des tarifs en salle
   useEffect(() => {
@@ -294,7 +346,6 @@ export function ActiveCallRoom({
   // 2. Initialisation WebRTC complète avec file d'attente ICE Candidate sécurisée
   useEffect(() => {
     let isMounted = true;
-    let localVideoElement = localVideoRef.current;
     let remoteVideoElement = remoteVideoRef.current;
     let remoteAudioElement = remoteAudioRef.current;
     const pendingIceCandidates: RTCIceCandidateInit[] = [];
@@ -356,6 +407,7 @@ export function ActiveCallRoom({
       const videoElement = remoteVideoRef.current;
       if (videoElement) {
         remoteVideoElement = videoElement;
+        videoElement.playsInline = true;
         videoElement.srcObject = remoteStream;
         videoElement.play().catch((error: unknown) => {
           console.warn('Lecture vidéo distante impossible :', error);
@@ -458,91 +510,112 @@ export function ActiveCallRoom({
       let mediaStream: MediaStream | null = null;
       try {
         if (navigator?.mediaDevices?.getUserMedia) {
-          const audioConstraints: MediaTrackConstraints = {
-            echoCancellation: true,
-            noiseSuppression: true,
-            autoGainControl: true,
-            sampleRate: { ideal: 48000 },
-            channelCount: { ideal: 2, min: 1 },
-          };
+          const hardwareType = callType === 'video' ? 'video_audio' : 'audio_only';
+          const lockAcquired = acquireHardwareLock(hardwareType);
+          if (!lockAcquired) {
+            setMediaWarning('La caméra et le microphone sont actuellement utilisés par un autre onglet. Dès que vous fermez cet onglet, les ressources seront automatiquement attribuées à cet appel.');
+            resolveMediaReady();
+            return;
+          }
 
-          const videoConstraints: MediaTrackConstraints = {
-            facingMode: 'user',
-            width: { ideal: 1280, min: 640 },
-            height: { ideal: 720, min: 480 },
-            frameRate: { ideal: 30, min: 15 },
-          };
-
-          try {
-            // Tentative 1 : Qualité optimisée HD + Audio DSP anti-écho/anti-bruit
-            mediaStream = await navigator.mediaDevices.getUserMedia({
-              audio: audioConstraints,
-              video: callType === 'video' ? videoConstraints : false,
-            });
-          } catch (e1) {
-            if (isMediaPermissionError(e1)) {
-              setMediaWarning('L’accès au microphone ou à la caméra a été refusé. Autorisez-les dans le navigateur avant de relancer l’appel.');
-              return;
-            }
-
-            console.warn('Tentative haute résolution échouée, tentative standard avec DSP...', e1);
+          if (callType === 'video') {
             try {
-              // Tentative 2 : Standard avec DSP audio
+              // Tentative 1 : Qualité optimisée HD + Audio DSP anti-écho/anti-bruit
               mediaStream = await navigator.mediaDevices.getUserMedia({
-                audio: { echoCancellation: true, noiseSuppression: true },
-                video: callType === 'video',
+                audio: CALL_AUDIO_CONSTRAINTS,
+                video: CALL_VIDEO_CONSTRAINTS,
               });
-            } catch (e2) {
-              if (isMediaPermissionError(e2)) {
+            } catch (e1) {
+              if (isMediaPermissionError(e1)) {
                 setMediaWarning('L’accès au microphone ou à la caméra a été refusé. Autorisez-les dans le navigateur avant de relancer l’appel.');
                 return;
               }
 
-              console.warn('Tentative vidéo standard échouée, tentative audio seul...', e2);
+              console.warn('Tentative haute résolution échouée, tentative mobile avant...', e1);
               try {
-                // Tentative 3 : Audio seul
+                // Tentative 2 : Caméra avant mobile avec contraintes allégées
                 mediaStream = await navigator.mediaDevices.getUserMedia({
-                  audio: { echoCancellation: true, noiseSuppression: true },
+                  audio: CALL_AUDIO_CONSTRAINTS,
+                  video: { facingMode: 'user' },
                 });
-                if (callType === 'video') {
-                  setMediaWarning('Caméra indisponible ou occupée : l’appel continue en audio haute qualité.');
-                }
-              } catch (e3) {
-                if (isMediaPermissionError(e3)) {
+              } catch (e2) {
+                if (isMediaPermissionError(e2)) {
                   setMediaWarning('L’accès au microphone ou à la caméra a été refusé. Autorisez-les dans le navigateur avant de relancer l’appel.');
                   return;
                 }
 
-                console.error('Périphériques audio/vidéo inaccessibles :', e3);
-                setMediaWarning('Microphone ou caméra inaccessibles. Veuillez vérifier les autorisations dans votre navigateur ou application.');
+                console.warn('Tentative vidéo standard échouée, tentative vidéo de base...', e2);
+                try {
+                  // Tentative 2bis : N'importe quelle caméra disponible
+                  mediaStream = await navigator.mediaDevices.getUserMedia({
+                    audio: CALL_AUDIO_CONSTRAINTS,
+                    video: true,
+                  });
+                } catch (e2bis) {
+                  if (isMediaPermissionError(e2bis)) {
+                    setMediaWarning('L’accès au microphone ou à la caméra a été refusé. Autorisez-les dans le navigateur avant de relancer l’appel.');
+                    return;
+                  }
+
+                  console.warn('Tentatives vidéo échouées, tentative audio seul...', e2bis);
+                  try {
+                    // Tentative 3 : Audio seul
+                    mediaStream = await navigator.mediaDevices.getUserMedia({
+                      audio: CALL_AUDIO_CONSTRAINTS,
+                    });
+                    setMediaWarning('Caméra indisponible ou occupée : l’appel continue en audio haute qualité.');
+                  } catch (e3) {
+                    if (isMediaPermissionError(e3)) {
+                      setMediaWarning('L’accès au microphone ou à la caméra a été refusé. Autorisez-les dans le navigateur avant de relancer l’appel.');
+                      return;
+                    }
+
+                    console.error('Périphériques audio/vidéo inaccessibles :', e3);
+                    setMediaWarning('Microphone ou caméra inaccessibles. Veuillez vérifier les autorisations dans votre navigateur ou application.');
+                  }
+                }
               }
+            }
+          } else {
+            // Appel audio seul
+            try {
+              mediaStream = await navigator.mediaDevices.getUserMedia({
+                audio: CALL_AUDIO_CONSTRAINTS,
+              });
+            } catch (eAudio) {
+              if (isMediaPermissionError(eAudio)) {
+                setMediaWarning('L’accès au microphone a été refusé. Autorisez-le dans le navigateur avant de relancer l’appel.');
+                return;
+              }
+              console.error('Microphone inaccessible :', eAudio);
+              setMediaWarning('Microphone inaccessible. Veuillez vérifier les autorisations dans votre navigateur.');
             }
           }
         }
 
         if (!isMounted) {
           if (mediaStream) mediaStream.getTracks().forEach((t) => t.stop());
+          releaseHardware();
           return;
         }
 
         if (mediaStream) {
-          localStreamRef.current = mediaStream;
-          setStream(mediaStream);
+          const capturedStream = mediaStream;
+          localStreamRef.current = capturedStream;
+          setStream(capturedStream);
+          registerActiveMediaStream(capturedStream, callType === 'video' ? 'video_audio' : 'audio_only');
 
-            if (callType === 'video' && mediaStream.getVideoTracks().length === 0) {
+            if (callType === 'video' && capturedStream.getVideoTracks().length === 0) {
               setMediaWarning('Caméra indisponible : l’appel continue sans votre vidéo.');
             }
 
-          const videoElement = localVideoRef.current;
-          if (videoElement) {
-            localVideoElement = videoElement;
-            videoElement.srcObject = mediaStream;
-          }
-
           // Ajout des pistes au PeerConnection
-          mediaStream.getTracks().forEach((track) => {
-            pc.addTrack(track, mediaStream!);
-          });
+          await Promise.all(capturedStream.getTracks().map(async (track) => {
+            const sender = pc.addTrack(track, capturedStream);
+            if (track.kind === 'audio' || track.kind === 'video') {
+              await configureCallSenderQuality(sender, track.kind);
+            }
+          }));
         }
       } catch (err) {
         console.error('Erreur accès média / WebRTC :', err);
@@ -620,7 +693,7 @@ export function ActiveCallRoom({
             pendingIceCandidates.push(signal.payload);
           }
         } else if (signal.type === 'call-ended') {
-          onEndCall();
+          finishCall(false);
         } else if (signal.type === 'peer-ready' && isInitiator) {
           await createAndSendOffer();
         }
@@ -647,9 +720,6 @@ export function ActiveCallRoom({
         localStreamRef.current.getTracks().forEach((t) => t.stop());
         localStreamRef.current = null;
       }
-      if (localVideoElement) {
-        localVideoElement.srcObject = null;
-      }
       if (remoteVideoElement?.srcObject === remoteStream) {
         remoteVideoElement.srcObject = null;
       }
@@ -660,14 +730,32 @@ export function ActiveCallRoom({
       remoteStreamRef.current = null;
       setRemoteAudioStream(null);
       pc.close();
+      releaseHardware();
     };
-  }, [callerEmail, receiverEmail, callId, isInitiator, callType, ambience, onEndCall]);
+  }, [callerEmail, receiverEmail, callId, isInitiator, callType, ambience, finishCall]);
+
+  useEffect(() => {
+    const videoElement = localVideoRef.current;
+    if (!videoElement || !stream || callType !== 'video' || camOff) return;
+
+    videoElement.muted = true;
+    videoElement.playsInline = true;
+    videoElement.srcObject = stream;
+    void videoElement.play().catch((error: unknown) => {
+      console.warn('Lecture vidéo locale impossible :', error);
+    });
+
+    return () => {
+      if (videoElement.srcObject === stream) videoElement.srcObject = null;
+    };
+  }, [stream, callType, camOff]);
 
   useEffect(() => {
     if (activeTab !== 'video') return;
     const remoteStream = remoteStreamRef.current;
     if (!remoteStream || !remoteVideoRef.current) return;
 
+    remoteVideoRef.current.playsInline = true;
     remoteVideoRef.current.srcObject = remoteStream;
     remoteVideoRef.current.play().catch((error: unknown) => {
       console.warn('Lecture vidéo distante impossible :', error);
@@ -692,26 +780,7 @@ export function ActiveCallRoom({
     }
   };
 
-  const handleHangup = async () => {
-    try {
-      await sendSignal(receiverEmail, {
-        type: 'call-ended',
-        sender: callerEmail,
-        target: receiverEmail,
-        callId,
-      });
-    } catch {}
-
-    if (localStreamRef.current) {
-      localStreamRef.current.getTracks().forEach((track) => track.stop());
-      localStreamRef.current = null;
-    }
-    if (pcRef.current) {
-      pcRef.current.close();
-      pcRef.current = null;
-    }
-    onEndCall();
-  };
+  const handleHangup = () => finishCall(true);
 
   const handleEnableRemoteAudio = () => {
     const audio = remoteAudioRef.current;

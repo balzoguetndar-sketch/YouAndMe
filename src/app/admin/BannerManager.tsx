@@ -41,6 +41,51 @@ export function BannerManager() {
   const [loadingSubmit, setLoadingSubmit] = useState(false);
   const [actionLoadingId, setActionLoadingId] = useState<string | null>(null);
 
+  // Vérification en direct de l'e-mail de l'annonceur (anti-fraude, anti-jetable, existence DNS)
+  const [emailCheck, setEmailCheck] = useState<{
+    status: 'idle' | 'checking' | 'valid' | 'invalid';
+    message?: string;
+    suggestedEmail?: string;
+  }>({ status: 'idle' });
+
+  useEffect(() => {
+    const clean = advertiserEmail.trim().toLowerCase();
+    if (!clean) {
+      setEmailCheck({ status: 'idle' });
+      return;
+    }
+
+    if (!clean.includes('@') || clean.length < 5) {
+      setEmailCheck({ status: 'idle' });
+      return;
+    }
+
+    const timer = setTimeout(async () => {
+      setEmailCheck({ status: 'checking', message: 'Vérification du domaine annonceur…' });
+      try {
+        const res = await fetch('/api/verify-email', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: clean }),
+        });
+        const data = await res.json();
+        if (data.valid) {
+          setEmailCheck({ status: 'valid', message: '✅ Nom de domaine et boîte e-mail valides.' });
+        } else {
+          setEmailCheck({
+            status: 'invalid',
+            message: data.error || 'Adresse e-mail invalide ou inexistante.',
+            suggestedEmail: data.suggestedEmail,
+          });
+        }
+      } catch {
+        setEmailCheck({ status: 'idle' });
+      }
+    }, 600);
+
+    return () => clearTimeout(timer);
+  }, [advertiserEmail]);
+
   const handleImageFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
@@ -89,6 +134,11 @@ export function BannerManager() {
 
     if (!imageUrl || imageUrl.startsWith('C:\\') || imageUrl.startsWith('/')) {
       alert('Veuillez sélectionner un fichier image ou saisir une URL web valide (https://...).');
+      return;
+    }
+
+    if (emailCheck.status === 'invalid') {
+      alert(emailCheck.message || 'L’adresse e-mail de l’annonceur est invalide ou son domaine n’existe pas.');
       return;
     }
 
@@ -206,15 +256,53 @@ export function BannerManager() {
             </div>
 
             <div>
-              <label className="block text-xs font-semibold text-slate-300">E-mail de l&apos;annonceur</label>
+              <label className="block text-xs font-semibold text-slate-300">
+                E-mail de l&apos;annonceur
+                <span className="text-slate-500 font-normal ml-1">(Vérification temps réel du domaine)</span>
+              </label>
               <input
                 type="email"
                 required
                 value={advertiserEmail}
                 onChange={(e) => setAdvertiserEmail(e.target.value)}
-                placeholder="annonceur@exemple.com"
-                className="mt-1 w-full rounded-xl bg-slate-950 border border-slate-800 px-3 py-2.5 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-indigo-500"
+                placeholder="annonceur@societe.com"
+                className={`mt-1 w-full rounded-xl bg-slate-950 border px-3 py-2.5 text-sm text-slate-100 placeholder-slate-500 focus:outline-none transition-colors ${
+                  emailCheck.status === 'valid'
+                    ? 'border-emerald-500 focus:border-emerald-400'
+                    : emailCheck.status === 'invalid'
+                    ? 'border-red-500 focus:border-red-400'
+                    : 'border-slate-800 focus:border-indigo-500'
+                }`}
               />
+
+              {emailCheck.status === 'checking' && (
+                <p className="mt-1.5 text-xs text-indigo-400 flex items-center gap-1.5 animate-pulse">
+                  <span>⏳</span> {emailCheck.message}
+                </p>
+              )}
+
+              {emailCheck.status === 'valid' && (
+                <p className="mt-1.5 text-xs text-emerald-400 flex items-center gap-1.5 font-medium">
+                  {emailCheck.message}
+                </p>
+              )}
+
+              {emailCheck.status === 'invalid' && (
+                <div className="mt-1.5 space-y-1">
+                  <p className="text-xs text-red-400 flex items-center gap-1.5 font-medium">
+                    <span>❌</span> {emailCheck.message}
+                  </p>
+                  {emailCheck.suggestedEmail && (
+                    <button
+                      type="button"
+                      onClick={() => setAdvertiserEmail(emailCheck.suggestedEmail!)}
+                      className="text-xs text-indigo-300 hover:text-indigo-200 underline font-semibold flex items-center gap-1"
+                    >
+                      💡 Vouliez-vous dire <strong>{emailCheck.suggestedEmail}</strong> ? (Cliquez pour corriger)
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
           </div>
 

@@ -4,7 +4,6 @@ import { useState, useEffect, useRef } from 'react';
 import { createClient } from '@/src/lib/supabase/clients';
 import { subscribeToPresence, subscribeToSignals, sendSignal, sendCallRequestUntilReceived, SignalData } from '@/src/lib/webrtc';
 import { soundManager } from '@/src/lib/sound';
-import { logUserConnection } from '@/src/lib/logger';
 import { ActiveCallRoom } from '@/src/components/call/ActiveCallRoom';
 import { IncomingCallModal } from '@/src/components/call/IncomingCallModal';
 
@@ -20,6 +19,8 @@ export function LiveUsersManager({ adminEmail }: LiveUsersManagerProps) {
 
   // Gestion des appels directs pour l'administrateur
   const [activeCallPeer, setActiveCallPeer] = useState<string | null>(null);
+  const activeCallPeerRef = useRef<string | null>(null);
+  activeCallPeerRef.current = activeCallPeer;
   const [activeCallId, setActiveCallId] = useState<string | null>(null);
   const activeCallIdRef = useRef<string | null>(null);
   const incomingCallIdRef = useRef<string | null>(null);
@@ -64,7 +65,7 @@ export function LiveUsersManager({ adminEmail }: LiveUsersManagerProps) {
     void fetchUser();
   }, [adminEmail, supabase]);
 
-  // Suivi de présence et écoute des signaux d'appel
+  // Suivi de présence et écoute des signaux d'appel (Connexion stable sans démontage)
   useEffect(() => {
     if (!myEmail) return;
 
@@ -73,13 +74,9 @@ export function LiveUsersManager({ adminEmail }: LiveUsersManagerProps) {
     window.addEventListener('click', handleUnlock, { once: true });
     window.addEventListener('touchstart', handleUnlock, { once: true });
 
-    // Suivi de présence
+    // Suivi de présence (temps réel pur, sans écriture SQL abusive)
     const unsubscribePresence = subscribeToPresence(myEmail, (usersSet) => {
       setOnlineUsers(new Set(usersSet));
-      // Auto-journalisation des utilisateurs connectés
-      usersSet.forEach((u) => {
-        if (u) logUserConnection(u).catch(() => {});
-      });
     });
 
     // Écoute des signaux WebRTC
@@ -108,7 +105,7 @@ export function LiveUsersManager({ adminEmail }: LiveUsersManagerProps) {
       } else if (signal.type === 'call-rejected') {
         if (signal.callId !== activeCallIdRef.current) return;
         soundManager.stop();
-        alert(`${activeCallPeer || 'L’utilisateur'} a décliné l'appel.`);
+        alert(`${activeCallPeerRef.current || 'L’utilisateur'} a décliné l'appel.`);
         setActiveCallPeer(null);
         activeCallIdRef.current = null;
         setActiveCallId(null);
@@ -130,7 +127,7 @@ export function LiveUsersManager({ adminEmail }: LiveUsersManagerProps) {
       unsubscribeSignals();
       soundManager.stop();
     };
-  }, [myEmail, activeCallPeer]);
+  }, [myEmail]);
 
   const handleCopy = (email: string) => {
     if (typeof navigator !== 'undefined' && navigator.clipboard) {
@@ -214,10 +211,10 @@ export function LiveUsersManager({ adminEmail }: LiveUsersManagerProps) {
     });
   };
 
-  const handleEndCall = () => {
+  const handleEndCall = (notifyPeer = true) => {
     soundManager.stop();
     const callId = activeCallIdRef.current;
-    if (activeCallPeer && myEmail) {
+    if (notifyPeer && activeCallPeer && myEmail) {
       sendSignal(activeCallPeer, {
         type: 'call-ended',
         sender: myEmail,

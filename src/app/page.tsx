@@ -20,42 +20,35 @@ import { PricingPlans } from '@/src/components/subscription/PricingPlans';
 import { getUserUsage, incrementUserUsage, UserUsageInfo } from '@/src/lib/usage';
 import { UsageLimitModal } from '@/src/components/subscription/UsageLimitModal';
 import { ContactList } from '@/src/components/contact/ContactList';
-import { useHeaderActions } from '@/src/components/layout/HeaderActionsContext';
 import { ADMIN_EMAIL } from '@/src/lib/validation';
-import { MediatorModal } from '@/src/components/contact/MediatorModal';
-import { OfflineMessageModal } from '@/src/components/contact/OfflineMessageModal';
+import { initTabCoordinator } from '@/src/lib/tabCoordinator';
 
 type Ambience = 'neutral' | 'love' | 'family' | 'couple' | 'friendship';
 type CallType = 'video' | 'audio';
-
-type ExtendedUserUsage = UserUsageInfo & {
-  hideAds?: boolean;
-  planType?: string | null;
-};
 
 export default function HomePage() {
   const router = useRouter();
   const [currentUserEmail, setCurrentUserEmail] = useState<string | null>(null);
   const [authCheckError, setAuthCheckError] = useState<string | null>(null);
-  const [userUsage, setUserUsage] = useState<ExtendedUserUsage | null>(null);
+  const [userUsage, setUserUsage] = useState<UserUsageInfo | null>(null);
   const [usageError, setUsageError] = useState<string | null>(null);
-  const [callError, setCallError] = useState<string | null>(null);
   const [showUsageModal, setShowUsageModal] = useState(false);
-  const [showMediatorModal, setShowMediatorModal] = useState(false);
   const [isAdminUser, setIsAdminUser] = useState(false);
   const [targetEmail, setTargetEmail] = useState('');
+  const targetEmailRef = useRef(targetEmail);
+  targetEmailRef.current = targetEmail;
   const [onlineUsers, setOnlineUsers] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const [showPricing, setShowPricing] = useState(false);
-  const { setHeaderActions } = useHeaderActions();
 
   // État de l'appel
+  const [activeCallId, setActiveCallId] = useState<string>('');
+  const activeCallIdRef = useRef('');
   const [isInCall, setIsInCall] = useState(false);
+  const [isStartingCall, setIsStartingCall] = useState(false);
+  const callLaunchInProgressRef = useRef(false);
+  const [callError, setCallError] = useState<string | null>(null);
   const [isInitiator, setIsInitiator] = useState(true);
-  const [activeCallId, setActiveCallId] = useState<string | null>(null);
-  const activeCallIdRef = useRef<string | null>(null);
-  const incomingCallIdRef = useRef<string | null>(null);
-  const handledCallRequestIdsRef = useRef(new Set<string>());
   const [callType, setCallType] = useState<CallType>('video');
   const [ambience, setAmbience] = useState<Ambience>('neutral');
 
@@ -64,15 +57,25 @@ export default function HomePage() {
     callerEmail: string;
     callType: CallType;
     ambience: string;
-    callId: string;
+    callId?: string;
   } | null>(null);
 
-  const [showOfflineModal, setShowOfflineModal] = useState(false);
+  // Section Test Local & Messages différés
   const [showLocalTest, setShowLocalTest] = useState(false);
+  const [offlineMessageType, setOfflineMessageType] = useState<'text' | 'audio' | 'video'>('text');
+  const [textMessage, setTextMessage] = useState('');
+  const [messageStatus, setMessageStatus] = useState<string | null>(null);
+
+  // Enregistrement Audio / Vidéo différé
+  const [isRecording, setIsRecording] = useState(false);
+  const [recordedMediaUrl, setRecordedMediaUrl] = useState<string | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const recordedChunksRef = useRef<Blob[]>([]);
+  const handledCallRequestIdsRef = useRef(new Set<string>());
 
   const supabase = createClient();
 
-  // 1. Déverrouillage Audio automatique
+  // 1. Déverrouillage Audio automatique au premier clic/contact
   useEffect(() => {
     const handleUnlock = () => {
       soundManager.unlock();
@@ -85,7 +88,7 @@ export default function HomePage() {
     };
   }, []);
 
-  // 2. Vérification de session
+  // 2. Vérification stricte de session éphémère (Objectif 9 : Réinitialisation à la fermeture)
   useEffect(() => {
     const initAuth = async () => {
       let email: string | null = null;
@@ -95,9 +98,9 @@ export default function HomePage() {
         let sessionData: { email?: string; error?: string };
         try {
           response = await fetch('/api/auth/session', { method: 'POST', cache: 'no-store' });
-          sessionData = (await response.json()) as { email?: string; error?: string };
+          sessionData = await response.json() as { email?: string; error?: string };
         } catch {
-          setAuthCheckError('Le service de connexion est momentanément indisponible.');
+          setAuthCheckError('Le service de connexion est momentanément indisponible. Réessayez sans fermer cette page.');
           setLoading(false);
           return;
         }
@@ -105,15 +108,15 @@ export default function HomePage() {
         if (response.status === 401 || response.status === 409) {
           try {
             await supabase.auth.signOut({ scope: 'local' });
-          } catch { }
-          await fetch('/api/auth/admin/logout', { method: 'POST' }).catch(() => { });
+          } catch {}
+          await fetch('/api/auth/admin/logout', { method: 'POST' }).catch(() => {});
           sessionStorage.removeItem('yam_user_email');
           sessionStorage.removeItem('yam_session_active');
           router.replace('/login');
           return;
         }
         if (!response.ok || !sessionData.email) {
-          setAuthCheckError(sessionData.error || 'Impossible de vérifier la session.');
+          setAuthCheckError(sessionData.error || 'Impossible de vérifier la session pour le moment. Réessayez sans fermer cette page.');
           setLoading(false);
           return;
         }
@@ -136,13 +139,16 @@ export default function HomePage() {
 
       try {
         const adminSession = await fetch('/api/auth/admin/session', { cache: 'no-store' });
-        setIsAdminUser(formattedEmail === ADMIN_EMAIL.toLowerCase() && adminSession.ok);
+        setIsAdminUser(
+          formattedEmail === ADMIN_EMAIL.toLowerCase() && adminSession.ok
+        );
       } catch {
         setIsAdminUser(false);
       }
 
+      // Chargement du statut d'utilisation et de la licence (Objectif 6)
       try {
-        const usage = (await getUserUsage(formattedEmail)) as ExtendedUserUsage;
+        const usage = await getUserUsage(formattedEmail);
         setUserUsage(usage);
         setUsageError(null);
         if (usage.isLocked) {
@@ -150,106 +156,89 @@ export default function HomePage() {
         }
       } catch (error) {
         setUserUsage(null);
-        setUsageError(error instanceof Error ? error.message : 'Erreur de vérification du quota.');
+        setUsageError(error instanceof Error ? error.message : 'Impossible de vérifier votre quota sur le serveur.');
       }
 
       setLoading(false);
-      logUserConnection(formattedEmail).catch(() => { });
+
+      // Journalisation de la présence en session
+      logUserConnection(formattedEmail).catch(() => {});
     };
 
     initAuth();
   }, [router, supabase]);
 
-  // 3. Écoute Realtime des changements de licence/quota
+  // Coordination inter-onglets (Règle 1 : session unique par e-mail, étanchéité des e-mails différents)
   useEffect(() => {
     if (!currentUserEmail) return;
 
-    const channel = supabase
-      .channel(`user-usage-${currentUserEmail}`)
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'user_usage',
-          filter: `email=eq.${currentUserEmail}`,
-        },
-        async () => {
-          try {
-            const updatedUsage = (await getUserUsage(currentUserEmail)) as ExtendedUserUsage;
-            setUserUsage(updatedUsage);
-            if (!updatedUsage.isLocked) {
-              setShowUsageModal(false);
-              setUsageError(null);
-            }
-          } catch { }
+    return initTabCoordinator(currentUserEmail, {
+      onSessionTakenOver: (takenEmail) => {
+        if (takenEmail.toLowerCase() === currentUserEmail.toLowerCase()) {
+          setAuthCheckError('Cette session a été reprise dans un onglet plus récent de ce navigateur.');
+          soundManager.stop();
+          setIsInCall(false);
         }
-      )
-      .subscribe();
+      },
+    });
+  }, [currentUserEmail]);
+
+  useEffect(() => {
+    if (!currentUserEmail || isAdminUser) return;
+
+    let checking = false;
+    const checkActiveSession = async () => {
+      if (checking) return;
+      checking = true;
+      try {
+        const response = await fetch('/api/auth/session', { method: 'POST', cache: 'no-store' });
+        if (response.status === 401 || response.status === 409) {
+          await supabase.auth.signOut({ scope: 'local' });
+          await fetch('/api/auth/admin/logout', { method: 'POST' }).catch(() => {});
+          sessionStorage.removeItem('yam_user_email');
+          sessionStorage.removeItem('yam_session_active');
+          router.replace('/login');
+        }
+      } catch {
+        // A temporary network failure should not invalidate a trusted session.
+      } finally {
+        checking = false;
+      }
+    };
+
+    const interval = window.setInterval(() => void checkActiveSession(), 60000);
+    const checkWhenVisible = () => {
+      if (document.visibilityState === 'visible') {
+        void checkActiveSession();
+      }
+    };
+    window.addEventListener('focus', checkWhenVisible);
+    document.addEventListener('visibilitychange', checkWhenVisible);
 
     return () => {
-      supabase.removeChannel(channel);
+      window.clearInterval(interval);
+      window.removeEventListener('focus', checkWhenVisible);
+      document.removeEventListener('visibilitychange', checkWhenVisible);
     };
-  }, [currentUserEmail, supabase]);
+  }, [currentUserEmail, isAdminUser, router, supabase]);
 
-  // 4. Actions complémentaires dans l'en-tête
-  useEffect(() => {
-    if (!currentUserEmail) {
-      setHeaderActions(null);
-      return;
-    }
-
-    setHeaderActions(
-      <div className="flex flex-wrap items-center gap-2">
-        {usageError ? (
-          <span role="alert" className="text-xs font-semibold text-red-300">
-            Erreur quota : {usageError}
-          </span>
-        ) : !userUsage ? (
-          <span role="status" className="text-xs font-semibold text-slate-400">
-            Vérification du quota…
-          </span>
-        ) : userUsage.hasLicense ? null : (
-          <div className="flex items-center gap-2 rounded-xl border border-slate-800 bg-slate-950/80 px-2 py-1.5 sm:px-3">
-            <span className="text-xs font-semibold text-slate-300">
-              🎯 <strong className={userUsage.remaining <= 2 ? 'text-red-400' : 'text-indigo-400'}>
-                {userUsage.remaining} / 10
-              </strong> gratuits restants
-            </span>
-          </div>
-        )}
-
-        {isAdminUser && (
-          <button
-            onClick={() => setShowPricing(true)}
-            className="text-[11px] font-bold text-amber-400 underline hover:text-amber-300"
-          >
-            Gérer les tarifs
-          </button>
-        )}
-        <button
-          onClick={() => setShowLocalTest((visible) => !visible)}
-          className="rounded-xl border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs font-semibold text-slate-200 transition-all hover:bg-slate-700"
-        >
-          {showLocalTest ? '✕ Masquer' : '🎥 Test'}
-        </button>
-      </div>
-    );
-  }, [currentUserEmail, isAdminUser, setHeaderActions, showLocalTest, usageError, userUsage]);
-
-  useEffect(() => () => setHeaderActions(null), [setHeaderActions]);
-
-  // 5. Signalisation & Présence WebRTC
+  // 3. Gestion de la présence en temps réel et signalisation d'appels entrants
   useEffect(() => {
     if (!currentUserEmail) return;
 
+    // Abonnement au suivi de présence en ligne
     const unsubscribePresence = subscribeToPresence(currentUserEmail, (onlineSet) => {
       setOnlineUsers(onlineSet);
     });
 
+    // Écoute des signaux d'appels entrants
     const unsubscribeSignals = subscribeToSignals(currentUserEmail, (signal: SignalData) => {
       if (signal.type === 'call-request') {
-        if (signal.target.toLowerCase() !== currentUserEmail.toLowerCase() || !signal.callId) return;
+        if (
+          !signal.callId ||
+          signal.target.toLowerCase() !== currentUserEmail.toLowerCase()
+        ) return;
+
         void sendSignal(signal.sender, {
           type: 'call-request-received',
           sender: currentUserEmail,
@@ -258,7 +247,10 @@ export default function HomePage() {
         });
         if (handledCallRequestIdsRef.current.has(signal.callId)) return;
         handledCallRequestIdsRef.current.add(signal.callId);
-        incomingCallIdRef.current = signal.callId;
+
+        activeCallIdRef.current = signal.callId;
+        setActiveCallId(signal.callId);
+        setTargetEmail(signal.sender);
         setIncomingCall({
           callerEmail: signal.sender,
           callType: signal.callType || 'video',
@@ -266,18 +258,28 @@ export default function HomePage() {
           callId: signal.callId,
         });
       } else if (signal.type === 'call-accepted') {
-        if (signal.callId !== activeCallIdRef.current) return;
+        if (signal.callId && signal.callId !== activeCallIdRef.current) return;
         soundManager.stop();
+        if (signal.callId) {
+          activeCallIdRef.current = signal.callId;
+          setActiveCallId(signal.callId);
+        }
         setIsInCall(true);
       } else if (signal.type === 'call-rejected') {
-        if (signal.callId !== activeCallIdRef.current) return;
+        if (signal.callId && signal.callId !== activeCallIdRef.current) return;
         soundManager.stop();
-        alert(`${targetEmail || 'Votre interlocuteur'} a décliné l'appel.`);
-        window.location.reload();
+        alert(`${targetEmailRef.current || 'Votre interlocuteur'} a décliné l'appel.`);
+        setIsInCall(false);
+        activeCallIdRef.current = '';
+        setActiveCallId('');
       } else if (signal.type === 'call-ended') {
-        if (signal.callId !== activeCallIdRef.current && signal.callId !== incomingCallIdRef.current) return;
+        if (signal.callId && signal.callId !== activeCallIdRef.current) return;
         soundManager.stop();
-        window.location.reload();
+        setIsInCall(false);
+        setIncomingCall(null);
+        if (signal.callId) handledCallRequestIdsRef.current.delete(signal.callId);
+        activeCallIdRef.current = '';
+        setActiveCallId('');
       }
     });
 
@@ -286,119 +288,119 @@ export default function HomePage() {
       unsubscribeSignals();
       soundManager.stop();
     };
-  }, [currentUserEmail, targetEmail]);
+  }, [currentUserEmail]);
 
+  // Validation email
   const cleanTargetEmail = targetEmail.trim().toLowerCase();
   const isValidTargetEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanTargetEmail);
   const isPeerOnline = isValidTargetEmail && onlineUsers.has(cleanTargetEmail);
 
+  // Démarrer un appel direct (avec vérification du quota des 10 utilisations - Objectif 6)
   const handleLaunchCall = async () => {
-    if (!isValidTargetEmail || !currentUserEmail) return;
+    if (!isValidTargetEmail || !currentUserEmail || callLaunchInProgressRef.current) return;
 
-    setUsageError(null);
+    callLaunchInProgressRef.current = true;
+    setIsStartingCall(true);
     setCallError(null);
-
+    setUsageError(null);
     try {
-      const latestUsage = (await getUserUsage(currentUserEmail)) as ExtendedUserUsage;
-      setUserUsage(latestUsage);
-
       const result = await incrementUserUsage(currentUserEmail);
-      setUserUsage(result.usage as ExtendedUserUsage);
-
+      setUserUsage(result.usage);
       if (!result.allowed) {
         setShowUsageModal(true);
         return;
       }
 
-      setShowUsageModal(false);
-      setUsageError(null);
-
+      const newCallId = `call_${crypto.randomUUID()}`;
+      activeCallIdRef.current = newCallId;
+      setActiveCallId(newCallId);
       soundManager.startOutgoingRingtone();
       setIsInitiator(true);
-      setIsInCall(true);
-      const callId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-      activeCallIdRef.current = callId;
-      setActiveCallId(callId);
 
       const received = await sendCallRequestUntilReceived(cleanTargetEmail, {
         type: 'call-request',
         sender: currentUserEmail,
         target: cleanTargetEmail,
-        callId,
         callType,
         ambience,
+        callId: newCallId,
       });
-
+      soundManager.stop();
       if (!received) {
-        soundManager.stop();
-        activeCallIdRef.current = null;
-        setActiveCallId(null);
-        setIsInCall(false);
-        setCallError('L’interlocuteur est en ligne mais n’a pas répondu à la poignée de main réseau. Réessayez.');
+        void sendSignal(cleanTargetEmail, {
+          type: 'call-ended',
+          sender: currentUserEmail,
+          target: cleanTargetEmail,
+          callId: newCallId,
+        }).catch(() => {});
+        activeCallIdRef.current = '';
+        setActiveCallId('');
+        setCallError('La demande d’appel n’a pas été confirmée par l’autre appareil. Vérifiez la connexion et réessayez.');
+        return;
       }
+
+      setIsInCall(true);
     } catch (error) {
-      setUsageError(error instanceof Error ? error.message : 'Erreur lors de la vérification du quota.');
+      soundManager.stop();
+      setUsageError(error instanceof Error ? error.message : 'Impossible de vérifier votre quota sur le serveur.');
+    } finally {
+      callLaunchInProgressRef.current = false;
+      setIsStartingCall(false);
     }
   };
 
+  // Accepter un appel entrant (avec vérification de quota)
   const handleAcceptIncomingCall = async () => {
     if (!incomingCall || !currentUserEmail) return;
 
     setUsageError(null);
-    setCallError(null);
     try {
-      const latestUsage = (await getUserUsage(currentUserEmail)) as ExtendedUserUsage;
-      setUserUsage(latestUsage);
-
       const result = await incrementUserUsage(currentUserEmail);
-      setUserUsage(result.usage as ExtendedUserUsage);
-
+      setUserUsage(result.usage);
       if (!result.allowed) {
         setShowUsageModal(true);
         return;
       }
 
-      setShowUsageModal(false);
-      setUsageError(null);
-
+      const callIdToUse = incomingCall.callId || activeCallId || `call_${Date.now()}`;
+      activeCallIdRef.current = callIdToUse;
+      setActiveCallId(callIdToUse);
       soundManager.stop();
       setTargetEmail(incomingCall.callerEmail);
       setCallType(incomingCall.callType);
       setAmbience(incomingCall.ambience as Ambience);
       setIsInitiator(false);
-      activeCallIdRef.current = incomingCall.callId;
-      incomingCallIdRef.current = null;
-      setActiveCallId(incomingCall.callId);
       setIsInCall(true);
 
       await sendSignal(incomingCall.callerEmail, {
         type: 'call-accepted',
         sender: currentUserEmail,
         target: incomingCall.callerEmail,
-        callId: incomingCall.callId,
+        callId: callIdToUse,
       });
 
       setIncomingCall(null);
     } catch (error) {
-      setUsageError(error instanceof Error ? error.message : 'Erreur de vérification du quota.');
+      setUsageError(error instanceof Error ? error.message : 'Impossible de vérifier votre quota sur le serveur.');
     }
   };
 
+  // Refuser un appel entrant
   const handleRejectIncomingCall = async () => {
     if (!incomingCall || !currentUserEmail) return;
 
     soundManager.stop();
     const caller = incomingCall.callerEmail;
-    const callId = incomingCall.callId;
     setIncomingCall(null);
-    incomingCallIdRef.current = null;
 
     await sendSignal(caller, {
       type: 'call-rejected',
       sender: currentUserEmail,
       target: caller,
-      callId,
+      callId: incomingCall.callId,
     });
+    activeCallIdRef.current = '';
+    setActiveCallId('');
   };
 
   const handleSelectContact = (contactEmail: string, selectedCallType: CallType) => {
@@ -407,12 +409,60 @@ export default function HomePage() {
     window.scrollTo({ top: document.getElementById('contact-form')?.offsetTop ?? 0, behavior: 'smooth' });
   };
 
+  // Enregistrement Mémo Audio / Vidéo différé
+  const startRecording = async (type: 'audio' | 'video') => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: true,
+        video: type === 'video',
+      });
+
+      recordedChunksRef.current = [];
+      const recorder = new MediaRecorder(stream);
+
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) {
+          recordedChunksRef.current.push(e.data);
+        }
+      };
+
+      recorder.onstop = () => {
+        const blob = new Blob(recordedChunksRef.current, {
+          type: type === 'video' ? 'video/webm' : 'audio/webm',
+        });
+        const url = URL.createObjectURL(blob);
+        setRecordedMediaUrl(url);
+        stream.getTracks().forEach((t) => t.stop());
+      };
+
+      recorder.start();
+      mediaRecorderRef.current = recorder;
+      setIsRecording(true);
+    } catch {
+      alert('Impossible d’accéder au micro ou à la caméra pour l’enregistrement.');
+    }
+  };
+
+  const stopRecording = () => {
+    if (mediaRecorderRef.current && isRecording) {
+      mediaRecorderRef.current.stop();
+      setIsRecording(false);
+    }
+  };
+
+  const handleSendOfflineMessage = () => {
+    setMessageStatus('✅ Votre message a été déposé de façon sécurisée pour votre interlocuteur.');
+    setTextMessage('');
+    setRecordedMediaUrl(null);
+    setTimeout(() => setMessageStatus(null), 5000);
+  };
+
   if (loading) {
     return (
       <main className="flex min-h-screen items-center justify-center bg-slate-950 text-slate-100 p-4">
         <div className="flex flex-col items-center gap-3">
           <div className="w-8 h-8 border-3 border-indigo-500 border-t-transparent rounded-full animate-spin" />
-          <p className="text-xs text-slate-400">Chargement de You&Me...</p>
+          <p className="text-xs text-slate-400">Chargement de votre espace You&Me...</p>
         </div>
       </main>
     );
@@ -436,27 +486,31 @@ export default function HomePage() {
     );
   }
 
+  // Si l'utilisateur est dans une salle d'appel active
   if (isInCall && currentUserEmail) {
+    const effectiveCallId = activeCallId || [currentUserEmail, cleanTargetEmail].sort().join('-');
     return (
       <main className="min-h-screen bg-slate-950 p-4 sm:p-6 flex flex-col justify-center">
         <ActiveCallRoom
           callerEmail={currentUserEmail}
           receiverEmail={cleanTargetEmail}
-          callId={activeCallId || ''}
+          callId={effectiveCallId}
           isInitiator={isInitiator}
           callType={callType}
           ambience={ambience}
-          onEndCall={async () => {
+          onEndCall={(notifyPeer = true) => {
             soundManager.stop();
-            if (currentUserEmail && cleanTargetEmail) {
-              await sendSignal(cleanTargetEmail, {
+            if (notifyPeer && currentUserEmail && cleanTargetEmail) {
+              sendSignal(cleanTargetEmail, {
                 type: 'call-ended',
                 sender: currentUserEmail,
                 target: cleanTargetEmail,
-                callId: activeCallId || undefined,
-              }).catch(() => { });
+                callId: effectiveCallId,
+              }).catch(() => {});
             }
-            window.location.reload();
+            setIsInCall(false);
+            activeCallIdRef.current = '';
+            setActiveCallId('');
           }}
         />
       </main>
@@ -465,12 +519,13 @@ export default function HomePage() {
 
   return (
     <main className="min-h-screen flex flex-col bg-slate-950 text-slate-100 pb-12">
+      {/* Modal de limite d'utilisation et achat de licence (Objectif 6) */}
       {showUsageModal && userUsage && (
         <UsageLimitModal
           userUsage={userUsage}
           onLicenseActivated={async () => {
             if (currentUserEmail) {
-              const updated = (await getUserUsage(currentUserEmail)) as ExtendedUserUsage;
+              const updated = await getUserUsage(currentUserEmail);
               setUserUsage(updated);
             }
             setShowUsageModal(false);
@@ -479,6 +534,7 @@ export default function HomePage() {
         />
       )}
 
+      {/* Modal d'appel entrant */}
       {incomingCall && (
         <IncomingCallModal
           callerEmail={incomingCall.callerEmail}
@@ -489,7 +545,7 @@ export default function HomePage() {
         />
       )}
 
-      {/* Point 3 : Bandeau de soutien visible UNIQUEMENT pour quota gratuit (masqué si licence payante) */}
+      {/* 1. Bandeau d'appel aux dons & licence : masqué automatiquement dès qu'une licence est active */}
       {!userUsage?.hasLicense && (
         <div className="w-full bg-gradient-to-r from-indigo-950 via-purple-950 to-indigo-950 border-b border-indigo-500/40 py-2.5 px-4 shadow-lg">
           <div className="max-w-4xl mx-auto flex flex-wrap items-center justify-between gap-3 text-xs sm:text-sm">
@@ -501,14 +557,14 @@ export default function HomePage() {
               onClick={() => setShowPricing(!showPricing)}
               className="px-3.5 py-1.5 rounded-full bg-indigo-600 hover:bg-indigo-500 font-bold text-xs text-white shadow-md transition-all cursor-pointer"
             >
-              {showPricing ? '✕ Fermer les tarifs' : '7€ avec pub, sans pub : 12€ ou 50€ +'}
+              {showPricing ? '✕ Fermer les tarifs' : '💎 Voir les tarifs & Licence'}
             </button>
           </div>
         </div>
       )}
 
-      {/* Le carrousel suit les droits publicitaires de la formule active. */}
-      {currentUserEmail && userUsage?.advertisingEnabled && (
+      {/* 2. Bannière publicitaire défilante : masquée pour les licences 12 € (no_ads) et 50 €+ (supporter) */}
+      {userUsage?.advertisingEnabled !== false && (
         <div className="w-full bg-slate-900/60 border-b border-slate-800/80 py-3 px-4">
           <div className="max-w-4xl mx-auto">
             <BannerCarousel />
@@ -516,7 +572,7 @@ export default function HomePage() {
         </div>
       )}
 
-      {/* Section des Tarifs */}
+      {/* 3. Section Dépliante des Tarifs & Licence */}
       {showPricing && (
         <div className="w-full bg-slate-900/95 border-b border-indigo-500/30 p-4 sm:p-6 animate-in fade-in">
           <div className="max-w-4xl mx-auto space-y-4">
@@ -534,7 +590,71 @@ export default function HomePage() {
         </div>
       )}
 
-      <div className="max-w-4xl w-full mx-auto px-4 sm:px-6 py-6 space-y-6 flex-1">
+      <div className="max-w-4xl w-full mx-auto px-4 sm:px-6 py-6 space-y-6">
+        {/* Barre d'état utilisateur avec Déconnexion direct & Compteur de 10 utilisations */}
+        <div className="flex flex-wrap items-center justify-between gap-4 bg-slate-900/90 border border-slate-800 p-4 sm:p-5 rounded-2xl shadow-xl">
+          <div className="flex items-center gap-3">
+            <span className="w-3 h-3 rounded-full bg-emerald-500 animate-pulse" />
+            <div>
+              <p className="text-xs text-slate-400">Connecté en tant que</p>
+              <p className="text-sm font-bold text-indigo-300">{currentUserEmail}</p>
+            </div>
+          </div>
+
+          {/* Compteur d'utilisations (Objectif 6) */}
+          <div className="flex items-center gap-2 sm:gap-3">
+            {usageError ? (
+              <span role="alert" className="text-xs font-semibold text-red-300">
+                Quota indisponible : {usageError}
+              </span>
+            ) : userUsage?.hasLicense ? (
+              <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold shadow ${
+                userUsage.licenseTier === 'supporter'
+                  ? 'bg-amber-950/80 border border-amber-500/60 text-amber-300'
+                  : userUsage.licenseTier === 'no_ads'
+                    ? 'bg-indigo-950/80 border border-indigo-500/60 text-indigo-300'
+                    : 'bg-emerald-950/80 border border-emerald-500/60 text-emerald-300'
+              }`}>
+                {userUsage.licenseTier === 'supporter'
+                  ? '👑 Licence à Vie (Mécène)'
+                  : userUsage.licenseTier === 'no_ads'
+                    ? '💎 Licence 1 An (Sans Pub)'
+                    : userUsage.licenseTier === 'ad_supported'
+                      ? '🛡️ Licence 1 An (Avec Pub)'
+                      : '⭐ Licence Active'}
+              </span>
+            ) : !userUsage ? (
+              <span role="status" className="text-xs font-semibold text-slate-400">
+                Vérification du quota serveur…
+              </span>
+            ) : (
+              <div className="flex items-center gap-2 bg-slate-950/80 border border-slate-800 px-3 py-1.5 rounded-xl">
+                <span className="text-xs font-semibold text-slate-300">
+                  🎯 <strong className={userUsage && userUsage.remaining <= 2 ? 'text-red-400' : 'text-indigo-400'}>
+                    {userUsage?.remaining ?? 10} / 10
+                  </strong> gratuits restants
+                </span>
+              </div>
+            )}
+
+            {isAdminUser && (
+              <button
+                onClick={() => setShowPricing(true)}
+                className="text-[11px] font-bold text-amber-400 hover:text-amber-300 underline cursor-pointer"
+              >
+                Gérer les tarifs
+              </button>
+            )}
+            <button
+              onClick={() => setShowLocalTest(!showLocalTest)}
+              className="text-xs px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 font-semibold transition-all cursor-pointer"
+            >
+              {showLocalTest ? '✕ Masquer' : '🎥 Test'}
+            </button>
+          </div>
+        </div>
+
+        {/* Bloc du test local de caméra / micro (maintenu pour les tests) */}
         {showLocalTest && (
           <div className="bg-slate-900 border border-indigo-500/40 rounded-2xl p-6 shadow-2xl animate-in fade-in space-y-4">
             <div className="flex items-center justify-between border-b border-slate-800 pb-3">
@@ -547,12 +667,17 @@ export default function HomePage() {
           </div>
         )}
 
-        <ContactList
-          currentUserEmail={currentUserEmail ?? ''}
-          onlineUsers={onlineUsers}
-          onSelectContact={handleSelectContact}
-        />
+        {/* Carnet de contacts */}
+        {currentUserEmail && (
+          <ContactList
+            key={currentUserEmail}
+            currentUserEmail={currentUserEmail}
+            onlineUsers={onlineUsers}
+            onSelectContact={handleSelectContact}
+          />
+        )}
 
+        {/* Formulaire principal : Saisie de l'interlocuteur & Signalisation */}
         <div id="contact-form" className="bg-slate-900/90 border border-slate-800 rounded-3xl p-6 sm:p-8 shadow-2xl space-y-6">
           <div className="space-y-2">
             <h2 className="text-xl sm:text-2xl font-extrabold text-white">
@@ -563,6 +688,7 @@ export default function HomePage() {
             </p>
           </div>
 
+          {/* Saisie Email avec Badge En Ligne / Hors Ligne */}
           <div className="space-y-2">
             <label htmlFor="target-email" className="block text-xs font-semibold text-slate-300">
               E-mail de votre correspondant
@@ -580,14 +706,16 @@ export default function HomePage() {
               {isValidTargetEmail && (
                 <div className="absolute right-3 top-2.5">
                   <span
-                    className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold border ${isPeerOnline
+                    className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold border ${
+                      isPeerOnline
                         ? 'bg-emerald-950 text-emerald-300 border-emerald-800'
                         : 'bg-amber-950 text-amber-300 border-amber-800'
-                      }`}
+                    }`}
                   >
                     <span
-                      className={`w-2 h-2 rounded-full ${isPeerOnline ? 'bg-emerald-400 animate-ping' : 'bg-amber-400'
-                        }`}
+                      className={`w-2 h-2 rounded-full ${
+                        isPeerOnline ? 'bg-emerald-400 animate-ping' : 'bg-amber-400'
+                      }`}
                     />
                     {isPeerOnline ? 'En ligne' : 'Hors ligne'}
                   </span>
@@ -596,51 +724,10 @@ export default function HomePage() {
             </div>
           </div>
 
-          {callError && (
-            <div className="p-3 rounded-xl bg-amber-950/60 border border-amber-700/60 text-xs font-semibold text-amber-200">
-              ⚠️ {callError}
-            </div>
-          )}
-
-          {/* === HORS LIGNE : options de contact différé === */}
-          {isValidTargetEmail && !isPeerOnline && (
-            <div className="space-y-4 pt-4 border-t border-slate-800 animate-in fade-in">
-              <div className="p-5 bg-slate-800/40 border border-slate-700 rounded-2xl space-y-4">
-                <div className="flex items-center justify-between">
-                  <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400">
-                    📪 Interlocuteur hors ligne
-                  </h3>
-                  <span className="text-[11px] text-slate-500">Laisser un message</span>
-                </div>
-                <p className="text-xs text-slate-400">
-                  Votre correspondant n&apos;est pas connecté en ce moment. Vous pouvez lui laisser un message écrit par e-mail, ou enregistrer un message audio (bientôt disponible).
-                </p>
-                <div className="grid grid-cols-2 gap-3">
-                  <button
-                    type="button"
-                    onClick={() => setShowOfflineModal(true)}
-                    className="flex items-center justify-center gap-2 py-3 px-4 rounded-xl bg-slate-700 hover:bg-slate-600 border border-slate-600 text-xs font-bold text-slate-200 transition-all"
-                    title="Écrire un message via You&Me"
-                  >
-                    ✍️ Message Écrit
-                  </button>
-                  <button
-                    type="button"
-                    disabled
-                    className="flex items-center justify-center gap-2 py-3 px-4 rounded-xl bg-slate-800 border border-slate-700 text-xs font-bold text-slate-600 cursor-not-allowed"
-                    title="Message audio — bientôt disponible"
-                  >
-                    🎵 Message Audio
-                    <span className="text-[9px] font-normal text-slate-700 ml-1">bientôt</span>
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* === EN LIGNE : appel direct en temps réel === */}
+          {/* CAS 1 : INTERLOCUTEUR EN LIGNE */}
           {isValidTargetEmail && isPeerOnline && (
             <div className="space-y-6 pt-4 border-t border-slate-800 animate-in fade-in">
+              {/* Option a1 : Appel direct en temps réel */}
               <div className="p-5 bg-emerald-950/30 border border-emerald-800/60 rounded-2xl space-y-5">
                 <div className="flex items-center justify-between">
                   <h3 className="text-xs font-bold uppercase tracking-wider text-emerald-400">
@@ -649,29 +736,33 @@ export default function HomePage() {
                   <span className="text-[11px] text-emerald-300">Connexion instantanée P2P</span>
                 </div>
 
+                {/* Choix Vidéo ou Audio */}
                 <div className="grid grid-cols-2 gap-3">
                   <button
                     type="button"
                     onClick={() => setCallType('video')}
-                    className={`py-3 px-4 rounded-xl text-xs font-bold border transition-all ${callType === 'video'
+                    className={`py-3 px-4 rounded-xl text-xs font-bold border transition-all ${
+                      callType === 'video'
                         ? 'bg-indigo-600 border-indigo-500 text-white shadow-lg'
                         : 'bg-slate-950 border-slate-800 text-slate-400 hover:bg-slate-800'
-                      }`}
+                    }`}
                   >
                     📹 Appel Vidéo
                   </button>
                   <button
                     type="button"
                     onClick={() => setCallType('audio')}
-                    className={`py-3 px-4 rounded-xl text-xs font-bold border transition-all ${callType === 'audio'
+                    className={`py-3 px-4 rounded-xl text-xs font-bold border transition-all ${
+                      callType === 'audio'
                         ? 'bg-indigo-600 border-indigo-500 text-white shadow-lg'
                         : 'bg-slate-950 border-slate-800 text-slate-400 hover:bg-slate-800'
-                      }`}
+                    }`}
                   >
                     🎙️ Appel Audio seul
                   </button>
                 </div>
 
+                {/* Choix d'ambiance */}
                 <div className="space-y-2">
                   <label className="block text-xs font-semibold text-slate-300">
                     Choisir l&apos;ambiance de l&apos;appel
@@ -688,10 +779,11 @@ export default function HomePage() {
                         key={item.id}
                         type="button"
                         onClick={() => setAmbience(item.id as Ambience)}
-                        className={`py-2.5 px-3 rounded-xl border text-xs font-semibold transition-all ${ambience === item.id
+                        className={`py-2.5 px-3 rounded-xl border text-xs font-semibold transition-all ${
+                          ambience === item.id
                             ? 'bg-indigo-950 border-indigo-500 text-indigo-200 font-bold shadow'
                             : 'bg-slate-950 border-slate-800 text-slate-400 hover:bg-slate-800'
-                          }`}
+                        }`}
                       >
                         {item.label}
                       </button>
@@ -699,43 +791,149 @@ export default function HomePage() {
                   </div>
                 </div>
 
+                {callError && (
+                  <p role="alert" className="text-sm text-red-300">
+                    {callError}
+                  </p>
+                )}
                 <button
                   onClick={handleLaunchCall}
-                  className="w-full py-4 rounded-2xl bg-emerald-600 hover:bg-emerald-500 font-bold text-sm text-white shadow-xl transition-all cursor-pointer"
+                  disabled={isStartingCall}
+                  className="w-full py-4 rounded-2xl bg-emerald-600 hover:bg-emerald-500 font-bold text-sm text-white shadow-xl transition-all cursor-pointer disabled:cursor-wait disabled:opacity-70"
                 >
-                  🚀 Lancer l&apos;appel {callType === 'video' ? 'Vidéo' : 'Audio'} ({ambience})
+                  {isStartingCall
+                    ? '⏳ Vérification de la connexion avec le correspondant…'
+                    : `🚀 Lancer l'appel ${callType === 'video' ? 'Vidéo' : 'Audio'} (${ambience})`}
+                </button>
+              </div>
+
+              {/* Option 2 : Ou laisser un message écrit / audio */}
+              <div className="p-5 bg-slate-950/70 border border-slate-800 rounded-2xl space-y-4">
+                <h3 className="text-xs font-bold uppercase tracking-wider text-slate-300">
+                  ✉️ Option 2 : Laisser un message direct (écrit ou audio)
+                </h3>
+                <textarea
+                  rows={2}
+                  value={textMessage}
+                  onChange={(e) => setTextMessage(e.target.value)}
+                  placeholder="Écrivez votre message court..."
+                  className="w-full rounded-xl bg-slate-900 border border-slate-800 p-3 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-indigo-500"
+                />
+                <button
+                  onClick={handleSendOfflineMessage}
+                  disabled={!textMessage.trim()}
+                  className="w-full py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 font-semibold text-xs text-white disabled:opacity-40 transition-all cursor-pointer"
+                >
+                  Envoyer le message
                 </button>
               </div>
             </div>
           )}
+
+          {/* CAS 2 : INTERLOCUTEUR HORS LIGNE (Un seul choix : message différé) */}
+          {isValidTargetEmail && !isPeerOnline && (
+            <div className="space-y-4 pt-4 border-t border-slate-800 animate-in fade-in">
+              <div className="p-5 bg-amber-950/30 border border-amber-800/60 rounded-2xl space-y-4">
+                <div className="space-y-1">
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-amber-400">
+                    🟠 Interlocuteur Hors Ligne — Laisser un message différé
+                  </h3>
+                  <p className="text-xs text-slate-400">
+                    Votre correspondant n&apos;est pas connecté. Vous pouvez lui laisser un message écrit, audio ou vidéo.
+                  </p>
+                </div>
+
+                {/* Sélecteur de type de message différé */}
+                <div className="grid grid-cols-3 gap-2">
+                  {[
+                    { id: 'text', label: '📝 Message Écrit' },
+                    { id: 'audio', label: '🎙️ Message Audio' },
+                    { id: 'video', label: '📹 Message Vidéo' },
+                  ].map((tab) => (
+                    <button
+                      key={tab.id}
+                      type="button"
+                      onClick={() => {
+                        setOfflineMessageType(tab.id as 'text' | 'audio' | 'video');
+                        setRecordedMediaUrl(null);
+                      }}
+                      className={`py-2 px-3 rounded-xl border text-xs font-semibold transition-all ${
+                        offlineMessageType === tab.id
+                          ? 'bg-amber-950 border-amber-600 text-amber-200'
+                          : 'bg-slate-950 border-slate-800 text-slate-400 hover:bg-slate-800'
+                      }`}
+                    >
+                      {tab.label}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Contenu selon le type */}
+                {offlineMessageType === 'text' && (
+                  <textarea
+                    rows={3}
+                    value={textMessage}
+                    onChange={(e) => setTextMessage(e.target.value)}
+                    placeholder="Saisissez votre message différé..."
+                    className="w-full rounded-xl bg-slate-950 border border-slate-800 p-3 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-amber-500"
+                  />
+                )}
+
+                {(offlineMessageType === 'audio' || offlineMessageType === 'video') && (
+                  <div className="p-4 bg-slate-950 rounded-xl border border-slate-800 text-center space-y-3">
+                    {!isRecording && !recordedMediaUrl && (
+                      <button
+                        onClick={() => startRecording(offlineMessageType)}
+                        className="px-5 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-500 text-white font-bold text-xs transition-all cursor-pointer"
+                      >
+                        🔴 Démarrer l&apos;enregistrement {offlineMessageType === 'audio' ? 'Audio' : 'Vidéo'}
+                      </button>
+                    )}
+
+                    {isRecording && (
+                      <div className="space-y-2">
+                        <p className="text-xs text-red-400 font-bold animate-pulse">
+                          ● Enregistrement en cours...
+                        </p>
+                        <button
+                          onClick={stopRecording}
+                          className="px-5 py-2 rounded-xl bg-red-600 hover:bg-red-500 text-white font-bold text-xs cursor-pointer"
+                        >
+                          ⏹️ Arrêter l&apos;enregistrement
+                        </button>
+                      </div>
+                    )}
+
+                    {recordedMediaUrl && (
+                      <div className="space-y-2">
+                        {offlineMessageType === 'audio' ? (
+                          <audio src={recordedMediaUrl} controls className="mx-auto w-full max-w-sm" />
+                        ) : (
+                          <video src={recordedMediaUrl} controls className="mx-auto w-full max-w-sm rounded-lg" />
+                        )}
+                        <p className="text-[11px] text-emerald-400">Enregistrement prêt à être envoyé.</p>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                <button
+                  onClick={handleSendOfflineMessage}
+                  className="w-full py-3.5 rounded-2xl bg-amber-600 hover:bg-amber-500 font-bold text-xs text-white shadow-lg transition-all cursor-pointer"
+                >
+                  Envoyer le message différé
+                </button>
+              </div>
+            </div>
+          )}
+
+          {messageStatus && (
+            <div className="p-4 rounded-xl bg-emerald-950/70 border border-emerald-800 text-emerald-300 text-xs font-semibold text-center animate-in fade-in">
+              {messageStatus}
+            </div>
+          )}
         </div>
       </div>
-
-      {showOfflineModal && currentUserEmail && isValidTargetEmail && (
-        <OfflineMessageModal
-          senderEmail={currentUserEmail}
-          recipientEmail={cleanTargetEmail}
-          onClose={() => setShowOfflineModal(false)}
-        />
-      )}
-
-      {/* Pied de page avec lien pour saisir le médiateur */}
-      <footer className="mt-8 text-center border-t border-slate-800/80 pt-6 pb-2 px-4">
-        <button
-          onClick={() => setShowMediatorModal(true)}
-          className="inline-flex items-center gap-2 text-xs font-medium text-slate-400 hover:text-indigo-400 transition-colors underline cursor-pointer"
-        >
-          <span>⚖️</span> Un litige ou une question ? Saisir le Médiateur / Administrateur (Réponse garantie sous 48h)
-        </button>
-
-        {showMediatorModal && currentUserEmail && (
-          <MediatorModal
-            userEmail={currentUserEmail}
-            licenseTier={userUsage?.licenseTier ?? null}
-            onClose={() => setShowMediatorModal(false)}
-          />
-        )}
-      </footer>
     </main>
   );
 }

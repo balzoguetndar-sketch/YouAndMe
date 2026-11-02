@@ -13,54 +13,95 @@ type ContactListProps = {
 export function ContactList({ currentUserEmail, onlineUsers, onSelectContact }: ContactListProps) {
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [newEmail, setNewEmail] = useState('');
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(() => Boolean(currentUserEmail?.trim()));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Email du contact pour lequel le modal de message est ouvert
   const [messageTarget, setMessageTarget] = useState<string | null>(null);
 
+  // 1. Réinitialisation instantanée du carnet dès que currentUserEmail change (pattern officiel React)
+  const [prevEmail, setPrevEmail] = useState(currentUserEmail);
+  if (currentUserEmail !== prevEmail) {
+    setPrevEmail(currentUserEmail);
+    setContacts([]);
+    setLoading(Boolean(currentUserEmail?.trim()));
+    setError(null);
+    setNewEmail('');
+    setMessageTarget(null);
+  }
+
   useEffect(() => {
+    const cleanEmail = currentUserEmail?.toLowerCase().trim();
+    if (!cleanEmail) {
+      return;
+    }
+
+    const controller = new AbortController();
     let active = true;
 
     async function loadContacts() {
       try {
-        const response = await fetch('/api/contacts', { cache: 'no-store' });
-        
+        // 2. Recharger les contacts pour le nouveau compte
+        const response = await fetch(`/api/contacts?account=${encodeURIComponent(cleanEmail)}`, {
+          cache: 'no-store',
+          signal: controller.signal,
+        });
+
         // Vérification sécurisée du type de contenu
         const contentType = response.headers.get('content-type');
         if (!contentType || !contentType.includes('application/json')) {
           throw new Error('Le serveur de contacts n’est pas disponible temporairement.');
         }
 
-        const data = (await response.json()) as { contacts?: Contact[]; error?: string };
-        if (!response.ok) throw new Error(data.error || 'Impossible de charger les contacts.');
+        const data = (await response.json()) as {
+          contacts?: Contact[];
+          userEmail?: string;
+          error?: string;
+        };
+
+        if (!response.ok) {
+          throw new Error(data.error || 'Impossible de charger les contacts.');
+        }
+
+        // 3. Vérifier que l'identité Supabase authentifiée correspond bien au compte actif
+        if (data.userEmail && data.userEmail.toLowerCase().trim() !== cleanEmail) {
+          throw new Error('L’identité de session authentifiée ne correspond pas au compte actif.');
+        }
+
         if (active) {
           setContacts(data.contacts ?? []);
           setError(null);
         }
       } catch (loadError) {
-        if (active) setError(loadError instanceof Error ? loadError.message : 'Impossible de charger les contacts.');
+        if (!active || controller.signal.aborted) return;
+        setContacts([]); // Sécurité : la liste reste impérativement vide en cas d'erreur
+        setError(loadError instanceof Error ? loadError.message : 'Impossible de charger les contacts.');
       } finally {
-        if (active) setLoading(false);
+        if (active) {
+          setLoading(false);
+        }
       }
     }
 
     void loadContacts();
+
     return () => {
       active = false;
+      controller.abort();
     };
-  }, []);
+  }, [currentUserEmail]);
 
   const handleAdd = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setError(null);
     setSaving(true);
+    const cleanEmail = currentUserEmail?.toLowerCase().trim();
 
     try {
       const response = await fetch('/api/contacts', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ contactEmail: newEmail }),
+        body: JSON.stringify({ contactEmail: newEmail, account: cleanEmail }),
       });
 
       const contentType = response.headers.get('content-type');
@@ -81,11 +122,12 @@ export function ContactList({ currentUserEmail, onlineUsers, onSelectContact }: 
 
   const handleRemove = async (contactId: string) => {
     setError(null);
+    const cleanEmail = currentUserEmail?.toLowerCase().trim();
     try {
       const response = await fetch('/api/contacts', {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ contactId }),
+        body: JSON.stringify({ contactId, account: cleanEmail }),
       });
 
       const contentType = response.headers.get('content-type');
@@ -144,11 +186,11 @@ export function ContactList({ currentUserEmail, onlineUsers, onSelectContact }: 
       ) : (
         <div className="space-y-3">
           {contacts.map((contact) => {
-            const isOnline = onlineUsers.has(contact.contact_email);
+            const isOnline = onlineUsers.has(contact.contact_email.trim().toLowerCase());
             return (
-              <article key={contact.id} className="flex min-w-0 items-center gap-2 rounded-2xl border border-slate-800 bg-slate-950/70 p-3">
-                <div className="flex min-w-0 flex-1 items-center gap-2">
-                  <p className="min-w-0 flex-1 truncate text-sm font-semibold text-white">{contact.contact_email}</p>
+              <article key={contact.id} className="flex min-w-0 flex-col gap-3 rounded-2xl border border-slate-800 bg-slate-950/70 p-3 sm:flex-row sm:items-center sm:gap-2">
+                <div className="flex min-w-0 flex-1 items-start gap-2 sm:items-center">
+                  <p className="min-w-0 flex-1 break-all text-sm font-semibold text-white">{contact.contact_email}</p>
                   <div className="flex shrink-0 items-center gap-1.5">
                     <span className={`h-2 w-2 rounded-full ${isOnline ? 'bg-emerald-400 animate-ping' : 'bg-slate-500'}`} />
                     <span className={`whitespace-nowrap text-[10px] font-bold sm:text-xs ${isOnline ? 'text-emerald-300' : 'text-slate-500'}`}>
@@ -157,7 +199,7 @@ export function ContactList({ currentUserEmail, onlineUsers, onSelectContact }: 
                   </div>
                 </div>
 
-                <div className="flex shrink-0 items-center gap-1">
+                <div className="flex shrink-0 flex-wrap items-center justify-end gap-1">
                   {isOnline ? (
                     <>
                       {/* Contact EN LIGNE : appels directs disponibles */}

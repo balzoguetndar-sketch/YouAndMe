@@ -42,19 +42,31 @@ export const ICE_SERVERS: RTCConfiguration = {
     // Support des serveurs TURN configurables via variables d'environnement
     ...(process.env.NEXT_PUBLIC_TURN_URL
       ? [
-          {
-            urls: process.env.NEXT_PUBLIC_TURN_URL,
-            username: process.env.NEXT_PUBLIC_TURN_USERNAME || undefined,
-            credential: process.env.NEXT_PUBLIC_TURN_CREDENTIAL || undefined,
-          },
-        ]
+        {
+          urls: process.env.NEXT_PUBLIC_TURN_URL,
+          username: process.env.NEXT_PUBLIC_TURN_USERNAME || undefined,
+          credential: process.env.NEXT_PUBLIC_TURN_CREDENTIAL || undefined,
+        },
+      ]
       : []),
   ],
   iceCandidatePoolSize: 10,
 };
 
+type SignalCallback = (data: SignalData) => void;
+type SubscribedCallback = () => void;
+
+interface SignalHub {
+  channel: RealtimeChannel;
+  listeners: Set<SignalCallback>;
+  subscribers: Set<SubscribedCallback>;
+  isSubscribed: boolean;
+}
+
+const signalHubs = new Map<string, SignalHub>();
+
 /**
- * Abonnement aux signaux WebRTC pour un utilisateur donné
+ * Abonnement aux signaux WebRTC pour un utilisateur donné (partagé entre composants sans coupure)
  */
 export function subscribeToSignals(
   userEmail: string,
@@ -65,30 +77,74 @@ export function subscribeToSignals(
   const supabase = createClient();
   const channelName = `webrtc_${cleanEmail}`;
 
-  const channel = supabase.channel(channelName, {
-    config: {
-      broadcast: { self: true },
-    },
-  });
+  let hub = signalHubs.get(cleanEmail);
 
-  channel
-    .on('broadcast', { event: 'signal' }, (payload) => {
-      if (payload && payload.payload) {
-        const signal = payload.payload as SignalData;
-        onSignalReceived(signal);
-        if (signal.type === 'call-request-received') {
-          callRequestReceiptListeners.forEach((listener) => listener(signal));
-        }
-      }
-    })
-    .subscribe((status) => {
-      if (status === 'SUBSCRIBED') onSubscribed?.();
+  if (!hub) {
+    const listeners = new Set<SignalCallback>();
+    const subscribers = new Set<SubscribedCallback>();
+    const channel = supabase.channel(channelName, {
+      config: {
+        broadcast: { self: true },
+      },
     });
 
+    hub = {
+      channel,
+      listeners,
+      subscribers,
+      isSubscribed: false,
+    };
+    signalHubs.set(cleanEmail, hub);
+
+    channel
+      .on('broadcast', { event: 'signal' }, (payload) => {
+        if (payload && payload.payload) {
+          const signal = payload.payload as SignalData;
+          hub?.listeners.forEach((listener) => {
+            try {
+              listener(signal);
+            } catch (err) {
+              console.error('Erreur listener signal :', err);
+            }
+          });
+          if (signal.type === 'call-request-received') {
+            callRequestReceiptListeners.forEach((listener) => listener(signal));
+          }
+        }
+      })
+      .subscribe((status) => {
+        if (status === 'SUBSCRIBED') {
+          if (hub) hub.isSubscribed = true;
+          hub?.subscribers.forEach((cb) => {
+            try {
+              cb();
+            } catch {}
+          });
+        }
+      });
+  }
+
+  hub.listeners.add(onSignalReceived);
+  if (onSubscribed) {
+    hub.subscribers.add(onSubscribed);
+    if (hub.isSubscribed) {
+      onSubscribed();
+    }
+  }
+
   return () => {
-    try {
-      supabase.removeChannel(channel);
-    } catch {}
+    const currentHub = signalHubs.get(cleanEmail);
+    if (!currentHub) return;
+    currentHub.listeners.delete(onSignalReceived);
+    if (onSubscribed) currentHub.subscribers.delete(onSubscribed);
+
+    // Ne fermer le canal que s'il n'y a plus aucun composant à l'écoute sur ce compte
+    if (currentHub.listeners.size === 0) {
+      signalHubs.delete(cleanEmail);
+      try {
+        supabase.removeChannel(currentHub.channel);
+      } catch {}
+    }
   };
 }
 
@@ -106,11 +162,10 @@ export async function sendSignal(targetEmail: string, signal: SignalData): Promi
     const existingChannels = supabase.getChannels();
     let channel = existingChannels.find((ch) => ch.topic === `realtime:${channelName}`);
 
-    const finish = (success: boolean, ch?: RealtimeChannel) => {
+    const finish = (success: boolean) => {
       if (finished) return;
       finished = true;
       if (timeout.current) clearTimeout(timeout.current);
-      if (!success && ch) void supabase.removeChannel(ch);
       resolve(success);
     };
 
@@ -122,10 +177,10 @@ export async function sendSignal(targetEmail: string, signal: SignalData): Promi
           event: 'signal',
           payload: signal,
         });
-        finish(status === 'ok', ch);
+        finish(status === 'ok');
       } catch (err) {
         console.warn('Erreur transmission signal WebRTC :', err);
-        finish(false, ch);
+        finish(false);
       }
     };
 
@@ -148,7 +203,7 @@ export async function sendSignal(targetEmail: string, signal: SignalData): Promi
         if (activeChannel.state === 'joined') {
           void transmit(activeChannel);
         } else {
-          finish(false, activeChannel);
+          finish(false);
         }
       }
     }, 5000);
@@ -159,12 +214,12 @@ export async function sendSignal(targetEmail: string, signal: SignalData): Promi
           if (timeout.current) clearTimeout(timeout.current);
           void transmit(activeChannel);
         } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
-          finish(false, activeChannel);
+          finish(false);
         }
       });
     } catch (err) {
       console.warn('Erreur lors de la souscription au canal WebRTC :', err);
-      finish(false, activeChannel);
+      finish(false);
     }
   });
 }
@@ -227,6 +282,9 @@ export function sendCallRequestUntilReceived(
 // Gestionnaire Singleton de présence pour partager la même connexion WebSocket entre plusieurs composants
 let sharedPresenceChannel: RealtimeChannel | null = null;
 const presenceListeners = new Set<(onlineUsers: Set<string>) => void>();
+let presenceTrackRetryTimer: ReturnType<typeof setTimeout> | null = null;
+let presenceTrackRetryAttempt = 0;
+let presenceVisibilityHandler: (() => void) | null = null;
 
 /**
  * Suivi de présence en temps réel (En ligne / Hors ligne)
@@ -243,7 +301,8 @@ export function subscribeToPresence(
   const notifyAll = (state: Record<string, unknown[]>) => {
     const onlineSet = new Set<string>();
     Object.keys(state).forEach((key) => {
-      onlineSet.add(key.toLowerCase().trim());
+      const email = key.toLowerCase().trim();
+      if (email) onlineSet.add(email);
     });
     presenceListeners.forEach((listener) => {
       try {
@@ -252,6 +311,35 @@ export function subscribeToPresence(
         console.warn('Erreur listener présence :', err);
       }
     });
+  };
+
+  const trackPresence = async (channel: RealtimeChannel) => {
+    if (sharedPresenceChannel !== channel || !presenceListeners.size || channel.state !== 'joined') return;
+
+    try {
+      const result = await channel.track({
+        email: cleanMyEmail,
+        onlineAt: new Date().toISOString(),
+      });
+      if (result === 'ok') {
+        presenceTrackRetryAttempt = 0;
+        if (presenceTrackRetryTimer) clearTimeout(presenceTrackRetryTimer);
+        presenceTrackRetryTimer = null;
+        console.info('[Présence] Publication acceptée par Supabase Realtime.');
+        return;
+      }
+      console.warn('[Présence] Publication non confirmée par Supabase Realtime.', { status: result });
+    } catch (trackError) {
+      console.warn('[Présence] Échec de publication auprès de Supabase Realtime.', trackError);
+    }
+
+    if (presenceTrackRetryTimer) clearTimeout(presenceTrackRetryTimer);
+    const retryDelay = Math.min(30000, 1000 * (2 ** presenceTrackRetryAttempt));
+    presenceTrackRetryAttempt += 1;
+    presenceTrackRetryTimer = setTimeout(() => {
+      presenceTrackRetryTimer = null;
+      void trackPresence(channel);
+    }, retryDelay);
   };
 
   // Si le canal n'est pas encore créé, on l'initialise
@@ -278,22 +366,30 @@ export function subscribeToPresence(
       }
     };
 
-    sharedPresenceChannel
+    const channel = sharedPresenceChannel;
+    channel
       .on('presence', { event: 'sync' }, updateState)
       .on('presence', { event: 'join' }, updateState)
       .on('presence', { event: 'leave' }, updateState)
-      .subscribe(async (status) => {
-        if (status === 'SUBSCRIBED' && cleanMyEmail && sharedPresenceChannel) {
-          try {
-            await sharedPresenceChannel.track({
-              email: cleanMyEmail,
-              onlineAt: new Date().toISOString(),
-            });
-          } catch (trackErr) {
-            console.warn('Track presence ignoré :', trackErr);
-          }
+      .subscribe(async (status, error) => {
+        if (sharedPresenceChannel !== channel) return;
+        if (status === 'SUBSCRIBED') {
+          presenceTrackRetryAttempt = 0;
+          console.info('[Présence] Canal Supabase Realtime connecté.');
+          await trackPresence(channel);
+        } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+          console.warn('[Présence] Canal Supabase Realtime indisponible.', {
+            status,
+            reason: error?.message ?? 'Supabase n’a fourni aucun détail.',
+          });
         }
       });
+
+    presenceVisibilityHandler = () => {
+      if (document.visibilityState === 'visible') void trackPresence(channel);
+    };
+    window.addEventListener('focus', presenceVisibilityHandler);
+    document.addEventListener('visibilitychange', presenceVisibilityHandler);
   } else {
     // Si le canal est déjà souscrit, on transmet immédiatement l'état actuel au nouveau composant
     try {
@@ -301,22 +397,33 @@ export function subscribeToPresence(
       if (currentState && Object.keys(currentState).length > 0) {
         const onlineSet = new Set<string>();
         Object.keys(currentState).forEach((key) => {
-          onlineSet.add(key.toLowerCase().trim());
+          const email = key.toLowerCase().trim();
+          if (email) onlineSet.add(email);
         });
         onPresenceUpdate(onlineSet);
       }
-    } catch {}
+    } catch { }
   }
 
   return () => {
     presenceListeners.delete(onPresenceUpdate);
     // On ne ferme le canal que si aucun composant n'écoute plus la présence
     if (presenceListeners.size === 0 && sharedPresenceChannel) {
-      try {
-        sharedPresenceChannel.untrack().catch(() => {});
-        supabase.removeChannel(sharedPresenceChannel);
-      } catch {}
+      const channel = sharedPresenceChannel;
+      if (presenceTrackRetryTimer) clearTimeout(presenceTrackRetryTimer);
+      presenceTrackRetryTimer = null;
+      presenceTrackRetryAttempt = 0;
+      if (presenceVisibilityHandler) {
+        window.removeEventListener('focus', presenceVisibilityHandler);
+        document.removeEventListener('visibilitychange', presenceVisibilityHandler);
+        presenceVisibilityHandler = null;
+      }
       sharedPresenceChannel = null;
+      void supabase.removeChannel(channel).then((status) => {
+        if (status === 'error' || status === 'timed out') {
+          console.warn('[Présence] Fermeture du canal Realtime incomplète.', { status });
+        }
+      });
     }
   };
 }

@@ -33,5 +33,14 @@ export async function isActiveStandardSession(userId: string): Promise<boolean> 
     .eq('user_id', userId)
     .maybeSingle();
 
-  return !error && data?.session_token_hash === hashStandardSessionToken(token);
+  if (error) {
+    console.error('Erreur de vérification de la session active:', error.message);
+    return false;
+  }
+
+  const isActive = data?.session_token_hash === hashStandardSessionToken(token);
+  if (!isActive) {
+    console.warn('Session active absente ou non concordante.');
+  }
+  return isActive;
 }

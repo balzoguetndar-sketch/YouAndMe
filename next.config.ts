@@ -1,6 +1,14 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  allowedDevOrigins: [
+    "192.168.43.133",
+    "192.168.43.133:3000",
+    "192.168.43.9",
+    "192.168.43.9:3000",
+    "localhost:3000",
+    "127.0.0.1:3000",
+  ],
   poweredByHeader: false,
   productionBrowserSourceMaps: false,
   images: {
@@ -38,4 +46,3 @@ const nextConfig: NextConfig = {
 };
 
 export default nextConfig;
-
