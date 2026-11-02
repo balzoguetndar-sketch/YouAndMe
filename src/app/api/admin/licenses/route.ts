@@ -56,14 +56,20 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: 'Impossible de lire le quota utilisateur dans Supabase.' }, { status: 500 });
       }
 
-      const { error: resetError } = await supabaseAdmin.from('user_usage').upsert({
+      const resetPayload = {
         email: emailResult.cleanEmail,
         usage_count: 0,
         has_license: Boolean(existingUsage?.has_license) || Boolean(existingUsage?.license_key),
         license_key: existingUsage?.license_key || null,
         plan_type: existingUsage?.plan_type || 'none',
         activated_at: existingUsage?.activated_at || null,
-      }, { onConflict: 'email' });
+      };
+
+      const resetPromise = existingUsage
+        ? supabaseAdmin.from('user_usage').update(resetPayload).eq('email', emailResult.cleanEmail)
+        : supabaseAdmin.from('user_usage').insert(resetPayload);
+
+      const { error: resetError } = await resetPromise;
 
       if (resetError) {
         console.error('Erreur de remise à zéro du quota:', resetError.message);
@@ -136,7 +142,7 @@ export async function POST(request: Request) {
     }
 
     // Mise à jour simultanée des colonnes `license_key`, `plan_type` et `expires_at`
-    const { error: activationError } = await supabaseAdmin.from('user_usage').upsert({
+    const activationPayload = {
       email: emailResult.cleanEmail,
       usage_count: 0, // Réinitialise le compteur d'appels lors de l'activation
       has_license: true,
@@ -144,7 +150,13 @@ export async function POST(request: Request) {
       expires_at: expiresAt,
       license_key: licenseKey,
       activated_at: new Date(now).toISOString(),
-    }, { onConflict: 'email' });
+    };
+
+    const activationPromise = existingUsage
+      ? supabaseAdmin.from('user_usage').update(activationPayload).eq('email', emailResult.cleanEmail)
+      : supabaseAdmin.from('user_usage').insert(activationPayload);
+
+    const { error: activationError } = await activationPromise;
 
     if (activationError) {
       console.error('Erreur d’activation manuelle de licence:', activationError.message);

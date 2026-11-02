@@ -57,7 +57,7 @@ export async function POST(request: Request) {
 
             const tier = planId as PaidLicenseTier;
             const storedLicense = createStoredLicense(tier);
-            const { error: licenseError } = await supabaseAdmin.from('user_usage').upsert({
+            const licensePayload = {
                 email: cleanEmail,
                 usage_count: existingUsage?.usage_count || 0,
                 has_license: true,
@@ -70,7 +70,13 @@ export async function POST(request: Request) {
                 quota_unlimited: storedLicense.quota_unlimited,
                 advertising_enabled: storedLicense.advertising_enabled,
                 activated_at: new Date().toISOString(),
-            }, { onConflict: 'email' });
+            };
+
+            const licensePromise = existingUsage
+                ? supabaseAdmin.from('user_usage').update(licensePayload).eq('email', cleanEmail)
+                : supabaseAdmin.from('user_usage').insert(licensePayload);
+
+            const { error: licenseError } = await licensePromise;
 
             if (licenseError) {
                 console.error('Erreur d’activation de licence Stripe:', licenseError.message);

@@ -169,7 +169,7 @@ export async function POST(request: Request) {
     const { supabase, row, error } = await getUsageRow(email);
     if (error || !supabase) return json({ error: error || 'Supabase indisponible.' }, 503);
 
-    const { error: activationError } = await supabase.from('user_usage').upsert({
+    const activationPayload = {
       email,
       usage_count: row?.usage_count || 0,
       has_license: true,
@@ -180,7 +180,13 @@ export async function POST(request: Request) {
       quota_unlimited: true,
       advertising_enabled: false,
       activated_at: new Date().toISOString(),
-    }, { onConflict: 'email' });
+    };
+
+    const activationPromise = row
+      ? supabase.from('user_usage').update(activationPayload).eq('email', email)
+      : supabase.from('user_usage').insert(activationPayload);
+
+    const { error: activationError } = await activationPromise;
 
     if (activationError) {
       console.error('Erreur d’activation de licence:', activationError.message);

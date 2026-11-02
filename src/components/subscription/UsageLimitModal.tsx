@@ -86,7 +86,7 @@ export function UsageLimitModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md p-4 animate-in fade-in">
+    <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/80 backdrop-blur-md p-4 animate-in fade-in">
       <div className="w-full max-w-5xl max-h-[90vh] overflow-y-auto rounded-2xl bg-slate-900 border border-indigo-500/50 p-5 sm:p-7 shadow-2xl space-y-5 text-slate-100">
         <div className="text-center space-y-2">
           <h2 className="text-2xl font-black tracking-tight text-white">

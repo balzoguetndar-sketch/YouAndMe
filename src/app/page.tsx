@@ -358,6 +358,16 @@ export default function HomePage() {
       const result = await incrementUserUsage(currentUserEmail);
       setUserUsage(result.usage);
       if (!result.allowed) {
+        soundManager.stop();
+        const caller = incomingCall.callerEmail;
+        const callId = incomingCall.callId;
+        setIncomingCall(null);
+        void sendSignal(caller, {
+          type: 'call-rejected',
+          sender: currentUserEmail,
+          target: caller,
+          callId,
+        }).catch(() => {});
         setShowUsageModal(true);
         return;
       }
