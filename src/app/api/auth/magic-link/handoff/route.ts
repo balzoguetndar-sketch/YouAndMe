@@ -100,7 +100,7 @@ export async function POST(request: Request) {
     }
 
     const expiresAt = new Date(Date.now() + HANDOFF_TTL_MS).toISOString();
-    const { error } = await client.from('magic_link_handoffs').insert({
+    const { error } = await client.from('magic_link_handoffs').upsert({
       handoff_id_hash: handoffIdHash,
       ...encryptCredential(body.credential),
       expires_at: expiresAt,
