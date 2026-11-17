@@ -58,6 +58,7 @@ export default function LoginPage() {
   const [step, setStep] = useState<'email' | 'admin_code'>('email');
   const [error, setError] = useState<string | null>(null);
   const [infoMessage, setInfoMessage] = useState<string | null>(null);
+  const [devLink, setDevLink] = useState<string | null>(null);
   const [suggestedEmail, setSuggestedEmail] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [pendingHandoff, setPendingHandoff] = useState<MagicHandoff | null>(null);
@@ -132,6 +133,77 @@ export default function LoginPage() {
     };
 
     const finishHandoff = async (credential: HandoffCredential) => {
+      const isPhpBackend = Boolean(process.env.NEXT_PUBLIC_PHP_API_URL);
+
+      // --- Mode PHP / MySQL ---
+      if (isPhpBackend) {
+        let tokenToUse: string | null = null;
+
+        if (credential.type === 'session' && credential.accessToken) {
+          tokenToUse = credential.accessToken;
+        } else if (credential.type === 'token_hash' && credential.value) {
+          // Si le lien reçu contient un jeton brut, le valider via l'API PHP
+          const verifyRes = await fetch('/api/auth/magic-link/verify', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ token: credential.value, handoffId: pendingHandoff.id }),
+          });
+          const verifyData = (await verifyRes.json()) as { token?: string; error?: string };
+          if (!verifyRes.ok || !verifyData.token) {
+            throw new Error(verifyData.error || 'Impossible de vérifier le lien magique.');
+          }
+          tokenToUse = verifyData.token;
+        } else {
+          tokenToUse = localStorage.getItem('yam_php_token') || sessionStorage.getItem('yam_php_token');
+        }
+
+        if (tokenToUse) {
+          localStorage.setItem('yam_php_token', tokenToUse);
+          sessionStorage.setItem('yam_php_token', tokenToUse);
+        }
+
+        const sessionHeaders: Record<string, string> = {
+          'Content-Type': 'application/json',
+          'x-yam-session-action': 'activate',
+        };
+        if (tokenToUse) {
+          sessionHeaders['Authorization'] = `Bearer ${tokenToUse}`;
+        }
+
+        let emailToUse = pendingHandoff.email;
+        try {
+          const response = await fetch('/api/auth/session', {
+            method: 'POST',
+            cache: 'no-store',
+            headers: sessionHeaders,
+            body: tokenToUse ? JSON.stringify({ token: tokenToUse }) : undefined,
+            credentials: 'include',
+          });
+          const sessionData = await response.json() as { email?: string; error?: string };
+          if (response.ok && sessionData.email) {
+            emailToUse = sessionData.email;
+          }
+        } catch {
+          // Token déjà validé par le handoff
+        }
+
+        await fetch('/api/auth/magic-link/handoff', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ handoffId: pendingHandoff.id, acknowledge: true }),
+        }).catch(() => {});
+
+        clearPendingHandoff('');
+        sessionStorage.setItem('yam_user_email', emailToUse);
+        sessionStorage.setItem('yam_session_active', 'true');
+        localStorage.setItem('yam_user_email', emailToUse);
+        clearSessionConnectionLog(emailToUse);
+        await logUserConnection(emailToUse);
+        router.replace('/');
+        return;
+      }
+
+      // --- Mode Supabase classique ---
       const { data: existingUser } = await supabase.auth.getUser();
       const existingEmail = existingUser.user?.email?.trim().toLowerCase();
 
@@ -265,17 +337,17 @@ export default function LoginPage() {
   }, [pendingHandoff, router, supabase]);
 
   // Étape 1 : Saisie de l'adresse e-mail
-  const handleEmailSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
+  const handleEmailSubmit = async (e?: React.FormEvent<HTMLFormElement>) => {
+    if (e) e.preventDefault();
     setError(null);
     setInfoMessage(null);
+    setDevLink(null);
     setSuggestedEmail(null);
     setPendingHandoff(null);
     localStorage.removeItem(MAGIC_HANDOFF_STORAGE_KEY);
     sessionStorage.removeItem(MAGIC_HANDOFF_STORAGE_KEY);
 
-    const submittedEmail = new FormData(e.currentTarget).get('email');
-    const emailToValidate = typeof submittedEmail === 'string' ? submittedEmail : email;
+    const emailToValidate = email.trim();
 
     // 1. Validation syntaxique
     const localValidation = validateEmail(emailToValidate);
@@ -355,6 +427,7 @@ export default function LoginPage() {
       const magicLinkData = await magicLinkResponse.json() as {
         error?: string;
         message?: string;
+        devLink?: string;
       };
 
       if (!magicLinkResponse.ok) {
@@ -368,6 +441,7 @@ export default function LoginPage() {
 
       setLoading(false);
       setStep('email');
+      setDevLink(magicLinkData.devLink || null);
       setInfoMessage('Lien magique envoyé. Ouvrez-le dans votre e-mail ; cette page terminera la connexion automatiquement.');
     } catch (err: unknown) {
       localStorage.removeItem(MAGIC_HANDOFF_STORAGE_KEY);
@@ -398,6 +472,7 @@ export default function LoginPage() {
       const adminResponse = await fetch('/api/auth/admin', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify({ email: cleanEmail, code: cleanCode }),
       });
       const adminData = await adminResponse.json();
@@ -407,7 +482,12 @@ export default function LoginPage() {
         return;
       }
 
-      document.cookie = `yam_user_email=${encodeURIComponent(cleanEmail)}; path=/; SameSite=Lax`;
+      if (adminData.token) {
+        document.cookie = `yam_admin_session=${adminData.token}; path=/; SameSite=Lax; max-age=28800`;
+        sessionStorage.setItem('yam_php_token', adminData.token);
+        localStorage.setItem('yam_php_token', adminData.token);
+      }
+      document.cookie = `yam_user_email=${encodeURIComponent(cleanEmail)}; path=/; SameSite=Lax; max-age=28800`;
       document.cookie = 'yam_admin_2fa=; path=/; max-age=0;';
       localStorage.removeItem('yam_user_email');
       sessionStorage.setItem('yam_user_email', cleanEmail);
@@ -416,8 +496,8 @@ export default function LoginPage() {
 
       broadcastSessionChange(cleanEmail);
 
-      void logUserConnection(cleanEmail);
-      router.push('/admin');
+      await logUserConnection(cleanEmail);
+      window.location.href = '/admin';
     } catch (err: unknown) {
       setLoading(false);
       const msg = err instanceof Error ? err.message : 'Erreur lors de la validation du code.';
@@ -468,14 +548,24 @@ export default function LoginPage() {
 
         {/* Message d'information */}
         {infoMessage && (
-          <div className="p-3 text-xs sm:text-sm text-emerald-300 bg-emerald-950/80 rounded-xl border border-emerald-700/80 leading-relaxed animate-in fade-in">
-            {infoMessage}
+          <div className="p-3 text-xs sm:text-sm text-emerald-300 bg-emerald-950/80 rounded-xl border border-emerald-700/80 leading-relaxed animate-in fade-in space-y-2.5">
+            <div>{infoMessage}</div>
+            {devLink && (
+              <div className="pt-1">
+                <a
+                  href={devLink}
+                  className="inline-flex items-center gap-1.5 px-3 py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-medium rounded-lg text-xs transition-colors shadow-sm"
+                >
+                  🚀 Valider et se connecter directement (Test Local)
+                </a>
+              </div>
+            )}
           </div>
         )}
 
         {/* ÉTAPE 1 : Saisie de l'adresse e-mail */}
         {step === 'email' && (
-          <form onSubmit={handleEmailSubmit} className="space-y-5" noValidate>
+          <form onSubmit={handleEmailSubmit} action="javascript:void(0);" className="space-y-5" noValidate>
             <div>
               <label htmlFor="email" className="block text-xs sm:text-sm font-medium text-slate-200 mb-1.5">
                 Votre adresse e-mail

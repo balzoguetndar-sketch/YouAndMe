@@ -99,6 +99,43 @@ export default function VerifyMagicLinkPage() {
 
         window.history.replaceState(null, '', '/verify');
 
+        const isPhpBackend = Boolean(process.env.NEXT_PUBLIC_PHP_API_URL);
+
+        // --- Branche 1 : Mode PHP / MySQL (Hébergement mutualisé / Local) ---
+        if (isPhpBackend && tokenHash) {
+          const phpRes = await fetch('/api/auth/magic-link/verify', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ token: tokenHash, handoffId: handoffId || undefined }),
+          });
+          const phpData = (await phpRes.json()) as { success?: boolean; email?: string; token?: string; error?: string };
+          if (!phpRes.ok || !phpData.email) {
+            throw new Error(phpData.error || 'Le lien magique est invalide ou a expiré.');
+          }
+
+          // Dans tous les cas (même onglet ou nouvel onglet ouvert depuis l'e-mail),
+          // on initialise la session locale et on redirige directement vers la salle d'appels !
+          if (phpData.token) {
+            localStorage.setItem('yam_php_token', phpData.token);
+            sessionStorage.setItem('yam_php_token', phpData.token);
+          }
+          if (pendingHandoff) {
+            localStorage.removeItem(MAGIC_HANDOFF_STORAGE_KEY);
+            sessionStorage.removeItem(MAGIC_HANDOFF_STORAGE_KEY);
+          }
+          sessionStorage.setItem('yam_user_email', phpData.email);
+          sessionStorage.setItem('yam_session_active', 'true');
+          localStorage.setItem('yam_user_email', phpData.email);
+          clearSessionConnectionLog(phpData.email);
+          await logUserConnection(phpData.email);
+
+          setStatus('success');
+          setMessage('Connexion réussie ! Entrée dans la salle des appels…');
+          window.location.href = targetUrl;
+          return;
+        }
+
+        // --- Branche 2 : Mode Supabase Auth classique ---
         // A different browser or device relays the credential to the waiting login page.
         // On consomme le token ici pour obtenir les JWT et les déposer dans le handoff.
         // Ça fonctionne que le lien soit ouvert dans un nouvel onglet, un Custom Tab

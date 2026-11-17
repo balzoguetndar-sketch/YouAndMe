@@ -32,21 +32,39 @@ export function BannerCarousel() {
   const supabase = createClient();
 
   useEffect(() => {
+    let active = true;
     const fetchBanners = async () => {
       try {
+        // Si le backend PHP est activé, récupérer les bannières depuis l'API PHP
+        if (process.env.NEXT_PUBLIC_PHP_API_URL) {
+          const res = await fetch('/api/banners');
+          if (res.ok) {
+            const json = await res.json();
+            const list = Array.isArray(json) ? json : (json?.banners || []);
+            if (active && Array.isArray(list) && list.length > 0) {
+              setBanners(list);
+              setCurrentIndex(0);
+              return;
+            }
+          }
+        }
+
+        // Sinon ou en repli, utiliser Supabase
         const { data, error } = await supabase
           .from('banners')
           .select('*')
           .eq('active', true);
 
-        if (!error && data && data.length > 0) {
+        if (active && !error && Array.isArray(data) && data.length > 0) {
           setBanners(data);
+          setCurrentIndex(0);
         }
       } catch {
         // En cas d'erreur réseau, conserve les bannières par défaut
       }
     };
     fetchBanners();
+    return () => { active = false; };
   }, [supabase]);
 
   useEffect(() => {
@@ -56,21 +74,22 @@ export function BannerCarousel() {
     }, 4000);
 
     return () => clearInterval(interval);
-  }, [banners]);
+  }, [banners.length]);
 
-  const current = banners[currentIndex];
+  const current = banners[currentIndex] || banners[0] || DEFAULT_BANNERS[0];
+  if (!current || !current.image_url) return null;
 
   return (
     <div className="w-full max-w-md mx-auto overflow-hidden rounded-2xl border border-slate-800 bg-slate-900 shadow-xl relative">
       <a
-        href={current.target_url || '#'}
+        href={current?.target_url || '#'}
         target="_blank"
         rel="noopener noreferrer"
         className="block relative h-36 w-full group"
       >
         <Image
-          src={current.image_url}
-          alt={current.title}
+          src={current?.image_url || DEFAULT_BANNERS[0].image_url}
+          alt={current?.title || 'You&Me Banner'}
           fill
           loading={currentIndex === 0 ? 'eager' : 'lazy'}
           unoptimized
@@ -78,7 +97,7 @@ export function BannerCarousel() {
         />
         <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/20 to-transparent p-3 flex items-end justify-between">
           <span className="text-[11px] font-semibold text-white bg-slate-900/90 backdrop-blur px-2.5 py-1 rounded-full border border-slate-700 truncate max-w-[240px]">
-            📢 {current.title}
+            📢 {current?.title || ''}
           </span>
           <div className="flex gap-1">
             {banners.map((_, idx) => (

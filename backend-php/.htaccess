@@ -1,0 +1,19 @@
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+
+    # Sécurité : Empêcher l'accès direct aux fichiers sensibles
+    RewriteRule ^config\.php$ - [F,L]
+    RewriteRule ^schema\.sql$ - [F,L]
+    RewriteRule ^\.env.*$ - [F,L]
+    RewriteRule ^src/.*$ - [F,L]
+    RewriteRule ^storage/.*$ - [F,L]
+
+    # Redirection de toutes les requêtes vers index.php
+    RewriteCond %{REQUEST_FILENAME} !-f
+    RewriteCond %{REQUEST_FILENAME} !-d
+    RewriteRule ^(.*)$ index.php [QSA,L]
+</IfModule>
+
+# Désactiver le listage des répertoires
+Options -Indexes
+

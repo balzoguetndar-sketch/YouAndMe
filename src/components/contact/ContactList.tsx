@@ -10,6 +10,17 @@ type ContactListProps = {
   onSelectContact: (email: string, callType: 'video' | 'audio') => void;
 };
 
+function getAuthHeaders(): Record<string, string> {
+  const headers: Record<string, string> = {};
+  if (typeof window !== 'undefined') {
+    const token = localStorage.getItem('yam_php_token') || sessionStorage.getItem('yam_php_token');
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+  }
+  return headers;
+}
+
 export function ContactList({ currentUserEmail, onlineUsers, onSelectContact }: ContactListProps) {
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [newEmail, setNewEmail] = useState('');
@@ -45,6 +56,8 @@ export function ContactList({ currentUserEmail, onlineUsers, onSelectContact }: 
         const response = await fetch(`/api/contacts?account=${encodeURIComponent(cleanEmail)}`, {
           cache: 'no-store',
           signal: controller.signal,
+          headers: getAuthHeaders(),
+          credentials: 'include',
         });
 
         // Vérification sécurisée du type de contenu
@@ -100,8 +113,9 @@ export function ContactList({ currentUserEmail, onlineUsers, onSelectContact }: 
     try {
       const response = await fetch('/api/contacts', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
         body: JSON.stringify({ contactEmail: newEmail, account: cleanEmail }),
+        credentials: 'include',
       });
 
       const contentType = response.headers.get('content-type');
@@ -126,8 +140,9 @@ export function ContactList({ currentUserEmail, onlineUsers, onSelectContact }: 
     try {
       const response = await fetch('/api/contacts', {
         method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
         body: JSON.stringify({ contactId, account: cleanEmail }),
+        credentials: 'include',
       });
 
       const contentType = response.headers.get('content-type');

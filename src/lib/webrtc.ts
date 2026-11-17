@@ -1,5 +1,6 @@
 import { createClient } from '@/src/lib/supabase/clients';
 import type { RealtimeChannel } from '@supabase/supabase-js';
+import phpApi from '@/src/lib/phpClient';
 
 export type SignalType =
   | 'call-request'
@@ -33,12 +34,6 @@ export function subscribeToCallRequestReceipts(onReceipt: (signal: SignalData) =
 export const ICE_SERVERS: RTCConfiguration = {
   iceServers: [
     { urls: 'stun:stun.l.google.com:19302' },
-    { urls: 'stun:stun1.l.google.com:19302' },
-    { urls: 'stun:stun2.l.google.com:19302' },
-    { urls: 'stun:stun3.l.google.com:19302' },
-    { urls: 'stun:stun4.l.google.com:19302' },
-    { urls: 'stun:global.stun.twilio.com:3478' },
-    { urls: 'stun:stun.services.mozilla.com' },
     { urls: 'stun:stun.cloudflare.com:3478' },
     // Support des serveurs TURN configurables via variables d'environnement
     ...(process.env.NEXT_PUBLIC_TURN_URL
@@ -51,7 +46,7 @@ export const ICE_SERVERS: RTCConfiguration = {
       ]
       : []),
   ],
-  iceCandidatePoolSize: 10,
+  iceCandidatePoolSize: 2,
 };
 
 type SignalCallback = (data: SignalData) => void;
@@ -66,6 +61,41 @@ interface SignalHub {
 
 const signalHubs = new Map<string, SignalHub>();
 
+interface PhpSignalHub {
+  listeners: Set<SignalCallback>;
+  subscribers: Set<SubscribedCallback>;
+  active: boolean;
+  timer: ReturnType<typeof setTimeout> | null;
+  triggerPoll?: () => void;
+}
+
+const phpSignalHubs = new Map<string, PhpSignalHub>();
+
+// Mode dynamique de polling : 300ms pendant un appel/négociation, 1000ms au repos
+interface PhpPresenceHub {
+  listeners: Set<(onlineUsers: Set<string>) => void>;
+  active: boolean;
+  timer: ReturnType<typeof setTimeout> | null;
+  lastOnlineSet: Set<string>;
+}
+
+const phpPresenceHubs = new Map<string, PhpPresenceHub>();
+
+let currentSignalPollingInterval = 1000;
+
+export function setSignalPollingMode(mode: 'fast' | 'normal') {
+  currentSignalPollingInterval = mode === 'fast' ? 300 : 1000;
+  triggerImmediateSignalPoll();
+}
+
+export function triggerImmediateSignalPoll() {
+  phpSignalHubs.forEach((hub) => {
+    if (hub.active && hub.triggerPoll) {
+      hub.triggerPoll();
+    }
+  });
+}
+
 /**
  * Abonnement aux signaux WebRTC pour un utilisateur donné (partagé entre composants sans coupure)
  */
@@ -74,6 +104,81 @@ export function subscribeToSignals(
   onSignalReceived: (data: SignalData) => void,
   onSubscribed?: () => void
 ) {
+  // Mode PHP / MySQL (quand l'API PHP est activée - Hub Singleton partagé)
+  if (process.env.NEXT_PUBLIC_PHP_API_URL) {
+    const cleanKey = userEmail.toLowerCase().trim();
+    let hub = phpSignalHubs.get(cleanKey);
+
+    if (!hub) {
+      hub = {
+        listeners: new Set<SignalCallback>(),
+        subscribers: new Set<SubscribedCallback>(),
+        active: true,
+        timer: null,
+      };
+      phpSignalHubs.set(cleanKey, hub);
+
+      const activeHub = hub;
+      const poll = async () => {
+        if (!activeHub.active) return;
+        let hasSignals = false;
+        try {
+          const data = await phpApi.webrtc.pollSignals();
+          if (data && Array.isArray(data.signals) && activeHub.active) {
+            if (data.signals.length > 0) {
+              hasSignals = true;
+            }
+            for (const sig of data.signals) {
+              activeHub.listeners.forEach((cb) => {
+                try {
+                  cb(sig as SignalData);
+                } catch (e) {
+                  console.error('Erreur listener signal WebRTC :', e);
+                }
+              });
+              if (sig.type === 'call-request-received') {
+                callRequestReceiptListeners.forEach((cb) => cb(sig as SignalData));
+              }
+            }
+          }
+        } catch {}
+        if (activeHub.active) {
+          const interval = hasSignals ? Math.min(250, currentSignalPollingInterval) : currentSignalPollingInterval;
+          activeHub.timer = setTimeout(poll, interval);
+        }
+      };
+
+      activeHub.triggerPoll = () => {
+        if (!activeHub.active) return;
+        if (activeHub.timer) {
+          clearTimeout(activeHub.timer);
+          activeHub.timer = null;
+        }
+        activeHub.timer = setTimeout(poll, 40);
+      };
+
+      void poll();
+    }
+
+    hub.listeners.add(onSignalReceived);
+    if (onSubscribed) {
+      onSubscribed();
+    }
+
+    return () => {
+      const currentHub = phpSignalHubs.get(cleanKey);
+      if (currentHub) {
+        currentHub.listeners.delete(onSignalReceived);
+        if (currentHub.listeners.size === 0) {
+          currentHub.active = false;
+          if (currentHub.timer) clearTimeout(currentHub.timer);
+          phpSignalHubs.delete(cleanKey);
+        }
+      }
+    };
+  }
+
+  // Mode Supabase / VPS d'origine (par défaut en production)
   const cleanEmail = userEmail.toLowerCase().trim().replace(/[^a-zA-Z0-9_-]/g, '_');
   const supabase = createClient();
   const channelName = `webrtc_${cleanEmail}`;
@@ -153,6 +258,19 @@ export function subscribeToSignals(
  * Envoi d'un signal WebRTC à un utilisateur cible (garantit que le canal est connecté avant l'envoi)
  */
 export async function sendSignal(targetEmail: string, signal: SignalData): Promise<boolean> {
+  // Mode PHP / MySQL (quand l'API PHP est activée)
+  if (process.env.NEXT_PUBLIC_PHP_API_URL) {
+    try {
+      const res = await phpApi.webrtc.sendSignal(targetEmail, signal);
+      triggerImmediateSignalPoll();
+      return Boolean(res?.success);
+    } catch (err) {
+      console.warn('Erreur envoi signal WebRTC PHP :', err);
+      return false;
+    }
+  }
+
+  // Mode Supabase / VPS d'origine (par défaut en production)
   const cleanTarget = targetEmail.toLowerCase().trim().replace(/[^a-zA-Z0-9_-]/g, '_');
   const supabase = createClient();
   const channelName = `webrtc_${cleanTarget}`;
@@ -295,6 +413,63 @@ export function subscribeToPresence(
   onPresenceUpdate: (onlineUsers: Set<string>) => void
 ) {
   const cleanMyEmail = myEmail.toLowerCase().trim();
+
+  // Mode PHP / MySQL : présence active via heartbeat polling (compatible hébergement mutualisé)
+  if (process.env.NEXT_PUBLIC_PHP_API_URL) {
+    let hub = phpPresenceHubs.get(cleanMyEmail);
+
+    if (!hub) {
+      hub = {
+        listeners: new Set(),
+        active: true,
+        timer: null,
+        lastOnlineSet: new Set([cleanMyEmail]),
+      };
+      phpPresenceHubs.set(cleanMyEmail, hub);
+
+      const activeHub = hub;
+      const checkPresence = async () => {
+        if (!activeHub.active) return;
+        try {
+          const data = await phpApi.webrtc.getPresence();
+          if (data && Array.isArray(data.online_users) && activeHub.active) {
+            const set = new Set<string>(data.online_users.map((e) => e.toLowerCase().trim()));
+            set.add(cleanMyEmail);
+            activeHub.lastOnlineSet = set;
+            activeHub.listeners.forEach((listener) => {
+              try {
+                listener(set);
+              } catch (err) {
+                console.warn('Erreur listener présence PHP :', err);
+              }
+            });
+          }
+        } catch {}
+        if (activeHub.active) {
+          activeHub.timer = setTimeout(checkPresence, 2000);
+        }
+      };
+
+      void checkPresence();
+    }
+
+    hub.listeners.add(onPresenceUpdate);
+    // Notifier immédiatement avec le dernier ensemble connu
+    onPresenceUpdate(new Set(hub.lastOnlineSet));
+
+    return () => {
+      const currentHub = phpPresenceHubs.get(cleanMyEmail);
+      if (currentHub) {
+        currentHub.listeners.delete(onPresenceUpdate);
+        if (currentHub.listeners.size === 0) {
+          currentHub.active = false;
+          if (currentHub.timer) clearTimeout(currentHub.timer);
+          phpPresenceHubs.delete(cleanMyEmail);
+        }
+      }
+    };
+  }
+
   const supabase = createClient();
 
   presenceListeners.add(onPresenceUpdate);

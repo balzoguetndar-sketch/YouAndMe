@@ -30,7 +30,15 @@ async function loadLogs(): Promise<ConnectionLog[]> {
   if (!response.ok) {
     throw new Error(data.error || 'Impossible de charger les journaux.');
   }
-  return Array.isArray(data.logs) ? data.logs : [];
+  const rawList = Array.isArray(data.logs) ? data.logs : [];
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return rawList.map((l: any) => ({
+    id: String(l.id),
+    email: l.caller_email || l.email || 'inconnu',
+    ip_address: l.ip_address || '127.0.0.1',
+    created_at: l.created_at,
+    connected_at: l.created_at,
+  }));
 }
 
 export function LogManager({ initialLogs = [], initialError = null }: LogManagerProps) {

@@ -36,9 +36,24 @@ function assertSessionMatches(email: string, usage: UserUsageInfo) {
   }
 }
 
+function getAuthHeaders(): Record<string, string> {
+  const headers: Record<string, string> = {};
+  if (typeof window !== 'undefined') {
+    const token = localStorage.getItem('yam_php_token') || sessionStorage.getItem('yam_php_token');
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+  }
+  return headers;
+}
+
 export async function getUserUsage(email: string): Promise<UserUsageInfo> {
   const cleanEmail = (email || '').trim().toLowerCase();
-  const response = await fetch('/api/usage', { cache: 'no-store' });
+  const response = await fetch('/api/usage', {
+    cache: 'no-store',
+    headers: getAuthHeaders(),
+    credentials: 'include',
+  });
   const data = await readUsageResponse(response);
   if (!response.ok || !data.usage) {
     throw new Error(data.error || 'Impossible de lire le quota sur le serveur.');
@@ -54,8 +69,9 @@ export async function incrementUserUsage(email: string): Promise<{
   const cleanEmail = (email || '').trim().toLowerCase();
   const response = await fetch('/api/usage', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
     body: JSON.stringify({ action: 'consume' }),
+    credentials: 'include',
   });
   const data = await readUsageResponse(response);
   if (!data.usage) {

@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createClient } from '@/src/lib/supabase/clients';
-import { ICE_SERVERS, sendSignal, subscribeToSignals, SignalData } from '@/src/lib/webrtc';
+import { ICE_SERVERS, sendSignal, subscribeToSignals, setSignalPollingMode, triggerImmediateSignalPoll, SignalData } from '@/src/lib/webrtc';
 import { soundManager } from '@/src/lib/sound';
 import { PricingPlans } from '@/src/components/subscription/PricingPlans';
 import { Whiteboard } from '@/src/components/collaboration/Whiteboard';
@@ -185,6 +185,8 @@ export function ActiveCallRoom({
     if (callEndingRef.current) return;
     callEndingRef.current = true;
     soundManager.stop();
+    // Retour au polling normal dès la fin d'appel
+    setSignalPollingMode('normal');
 
     const localStream = localStreamRef.current;
     localStreamRef.current = null;
@@ -210,7 +212,7 @@ export function ActiveCallRoom({
         target: receiverEmail,
         callId,
       }).catch((error: unknown) => {
-        console.error('Erreur lors de la notification de fin d’appel :', error);
+        console.error('Erreur lors de la notification de fin d\u2019appel :', error);
       });
     }
 
@@ -435,6 +437,9 @@ export function ActiveCallRoom({
     const pendingIceCandidates: RTCIceCandidateInit[] = [];
     const pc = new RTCPeerConnection(ICE_SERVERS);
     pcRef.current = pc;
+    // Passage en mode polling rapide pendant toute la durée de la négociation/appel
+    setSignalPollingMode('fast');
+    triggerImmediateSignalPoll();
 
     // Stream distant accumulé
     const remoteStream = new MediaStream();
@@ -530,6 +535,22 @@ export function ActiveCallRoom({
       } else if (pc.iceConnectionState === 'closed') {
         clearIceWarningTimeout();
         if (isMounted) setConnectionStatus('disconnected');
+      }
+    };
+
+    // Détection native de coupure du correspondant (pas d'attente de polling)
+    pc.onconnectionstatechange = () => {
+      if (!isMounted) return;
+      if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed' || pc.connectionState === 'closed') {
+        // Le pair s'est déconnecté (ex: raccroché depuis mobile, coupure réseau)
+        // Délai court pour distinguer une micro-interruption d'une vraie coupure
+        setTimeout(() => {
+          if (!isMounted) return;
+          const state = pc.connectionState;
+          if (state === 'disconnected' || state === 'failed' || state === 'closed') {
+            finishCall(false);
+          }
+        }, 1500);
       }
     };
 

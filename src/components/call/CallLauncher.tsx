@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { createClient } from '@/src/lib/supabase/clients';
 import { ActiveCallRoom } from './ActiveCallRoom';
 import { IncomingCallModal } from './IncomingCallModal';
-import { subscribeToPresence, subscribeToSignals, sendSignal, sendCallRequestUntilReceived, SignalData } from '@/src/lib/webrtc';
+import { subscribeToPresence, subscribeToSignals, sendSignal, sendCallRequestUntilReceived, setSignalPollingMode, triggerImmediateSignalPoll, SignalData } from '@/src/lib/webrtc';
 import { soundManager } from '@/src/lib/sound';
 
 type Ambience = 'neutral' | 'love' | 'family' | 'couple' | 'friendship';
@@ -112,6 +112,7 @@ export function CallLauncher() {
       } else if (signal.type === 'call-rejected') {
         if (signal.callId !== activeCallIdRef.current) return;
         soundManager.stop();
+        setSignalPollingMode('normal');
         setIsCalling(false);
         setInCall(false);
         activeCallIdRef.current = null;
@@ -120,6 +121,7 @@ export function CallLauncher() {
       } else if (signal.type === 'call-ended') {
         if (signal.callId !== activeCallIdRef.current && signal.callId !== incomingCallIdRef.current) return;
         soundManager.stop();
+        setSignalPollingMode('normal');
         setIsCalling(false);
         setInCall(false);
         setIncomingCall(null);
@@ -151,6 +153,10 @@ export function CallLauncher() {
     const callId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
     activeCallIdRef.current = callId;
     setActiveCallId(callId);
+
+    // Passage en mode polling rapide pour la durée de la sonnerie/négociation
+    setSignalPollingMode('fast');
+    triggerImmediateSignalPoll();
 
     // Joue la sonnerie sortante d'attente
     soundManager.startOutgoingRingtone();

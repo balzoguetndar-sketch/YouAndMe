@@ -97,7 +97,19 @@ export default function HomePage() {
         let response: Response;
         let sessionData: { email?: string; error?: string };
         try {
-          response = await fetch('/api/auth/session', { method: 'POST', cache: 'no-store' });
+          const phpToken = localStorage.getItem('yam_php_token') || sessionStorage.getItem('yam_php_token');
+          const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+          if (phpToken) {
+            headers['Authorization'] = `Bearer ${phpToken}`;
+          }
+
+          response = await fetch('/api/auth/session', {
+            method: 'POST',
+            cache: 'no-store',
+            headers,
+            body: phpToken ? JSON.stringify({ token: phpToken }) : undefined,
+            credentials: 'include',
+          });
           sessionData = await response.json() as { email?: string; error?: string };
         } catch {
           setAuthCheckError('Le service de connexion est momentanément indisponible. Réessayez sans fermer cette page.');
@@ -191,7 +203,18 @@ export default function HomePage() {
       if (checking) return;
       checking = true;
       try {
-        const response = await fetch('/api/auth/session', { method: 'POST', cache: 'no-store' });
+        const phpToken = localStorage.getItem('yam_php_token') || sessionStorage.getItem('yam_php_token');
+        const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+        if (phpToken) {
+          headers['Authorization'] = `Bearer ${phpToken}`;
+        }
+        const response = await fetch('/api/auth/session', {
+          method: 'POST',
+          cache: 'no-store',
+          headers,
+          body: phpToken ? JSON.stringify({ token: phpToken }) : undefined,
+          credentials: 'include',
+        });
         if (response.status === 401 || response.status === 409) {
           await supabase.auth.signOut({ scope: 'local' });
           await fetch('/api/auth/admin/logout', { method: 'POST' }).catch(() => {});
