@@ -6,13 +6,20 @@ import { validateEmail } from '@/src/lib/validation';
 // Force dynamic rendering: prevents build-time static collection failure when env vars are absent (preview/PHP-backend mode).
 export const dynamic = 'force-dynamic';
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
-    apiVersion: '2023-10-16' as Stripe.LatestApiVersion,
-});
-const supabaseAdmin = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!
-);
+function getStripeClient() {
+    const key = process.env.STRIPE_SECRET_KEY;
+    if (!key) throw new Error('STRIPE_SECRET_KEY missing');
+    return new Stripe(key, {
+        apiVersion: '2023-10-16' as Stripe.LatestApiVersion,
+    });
+}
+
+function getSupabaseAdmin() {
+    const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    if (!url || !key) throw new Error('Supabase configuration missing');
+    return createClient(url, key);
+}
 
 export async function POST(request: Request) {
     const body = await request.text();
@@ -21,7 +28,7 @@ export async function POST(request: Request) {
     let event: Stripe.Event;
 
     try {
-        event = stripe.webhooks.constructEvent(
+        event = getStripeClient().webhooks.constructEvent(
             body,
             signature!,
             process.env.STRIPE_WEBHOOK_SECRET!
@@ -46,7 +53,7 @@ export async function POST(request: Request) {
 
         if (emailValidation.isValid && ['ad_supported', 'no_ads', 'supporter'].includes(planId || '')) {
             const cleanEmail = emailValidation.cleanEmail;
-            const { data: existingUsage, error: lookupError } = await supabaseAdmin
+            const { data: existingUsage, error: lookupError } = await getSupabaseAdmin()
                 .from('user_usage')
                 .select('usage_count')
                 .eq('email', cleanEmail)
@@ -75,8 +82,8 @@ export async function POST(request: Request) {
             };
 
             const licensePromise = existingUsage
-                ? supabaseAdmin.from('user_usage').update(licensePayload).eq('email', cleanEmail)
-                : supabaseAdmin.from('user_usage').insert(licensePayload);
+                ? getSupabaseAdmin().from('user_usage').update(licensePayload).eq('email', cleanEmail)
+                : getSupabaseAdmin().from('user_usage').insert(licensePayload);
 
             const { error: licenseError } = await licensePromise;
 
@@ -86,7 +93,7 @@ export async function POST(request: Request) {
             }
         }
 
-        await supabaseAdmin.from('donations').insert([
+        await getSupabaseAdmin().from('donations').insert([
             {
                 donor_email: donorEmail || 'Donateur Anonyme',
                 amount: amount,

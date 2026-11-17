@@ -1,5 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getContacts, addContact, removeContact } from '@/src/lib/contacts';
+// Force dynamic: prevents build-time static collection (env vars may be absent in preview/PHP mode).
+export const dynamic = 'force-dynamic';
 
 export async function GET(req: Request) {
   try {
@@ -72,4 +74,4 @@ export async function DELETE(req: Request) {
       { status }
     );
   }
-}
+}

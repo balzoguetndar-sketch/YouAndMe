@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
 import { validateEmail, ADMIN_EMAIL } from '@/src/lib/validation';
 import { verifyAdminPin } from '@/src/lib/adminAuth';
+// Force dynamic: prevents build-time static collection (env vars may be absent in preview/PHP mode).
+export const dynamic = 'force-dynamic';
 
 // Cache des codes OTP temporaires en mémoire (durée de validité : 10 minutes)
 interface OtpEntry {

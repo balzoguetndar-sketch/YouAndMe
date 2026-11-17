@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server';
 import dns from 'dns/promises';
 import { validateEmail, ADMIN_EMAIL } from '@/src/lib/validation';
 import { isDisposableDomain } from '@/src/lib/disposableDomains';
+// Force dynamic: prevents build-time static collection (env vars may be absent in preview/PHP mode).
+export const dynamic = 'force-dynamic';
 
 const GENERIC_ERROR_MESSAGE = "Cet e-mail n'existe pas ou comporte une erreur de saisie. Recommencez, s'il vous plaît.";
 

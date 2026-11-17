@@ -8,6 +8,9 @@ import {
   verifyAdminPin,
 } from '@/src/lib/adminAuth';
 
+// Force dynamic: prevents build-time static collection (env vars may be absent in preview/PHP mode).
+export const dynamic = 'force-dynamic';
+
 const attemptsByIp = new Map<string, { count: number; resetAt: number }>();
 const MAX_ATTEMPTS = 5;
 const ATTEMPT_WINDOW_MS = 15 * 60 * 1000;

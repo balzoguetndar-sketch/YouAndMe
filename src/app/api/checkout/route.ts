@@ -1,10 +1,18 @@
 import { NextResponse } from 'next/server';
 import Stripe from 'stripe';
 import { validateEmail } from '@/src/lib/validation';
+// Force dynamic: prevents build-time static collection (env vars may be absent in preview/PHP mode).
+export const dynamic = 'force-dynamic';
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
-    apiVersion: '2023-10-16' as Stripe.LatestApiVersion,
-});
+function getStripeClient() {
+    const key = process.env.STRIPE_SECRET_KEY;
+    if (!key) {
+        throw new Error('STRIPE_SECRET_KEY missing');
+    }
+    return new Stripe(key, {
+        apiVersion: '2023-10-16' as Stripe.LatestApiVersion,
+    });
+}
 
 export async function POST(req: Request) {
     try {
@@ -77,6 +85,7 @@ export async function POST(req: Request) {
             metadata.userEmail = cleanEmail;
         }
 
+        const stripe = getStripeClient();
         const session = await stripe.checkout.sessions.create({
             payment_method_types: ['card'],
             customer_email: cleanEmail || undefined,

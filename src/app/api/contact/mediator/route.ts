@@ -1,8 +1,14 @@
 import { NextResponse } from 'next/server';
 import { Resend } from 'resend';
 import { validateEmail, ADMIN_EMAIL } from '@/src/lib/validation';
+// Force dynamic: prevents build-time static collection (env vars may be absent in preview/PHP mode).
+export const dynamic = 'force-dynamic';
 
-const resend = new Resend(process.env.RESEND_API_KEY);
+function getResendClient() {
+  const key = process.env.RESEND_API_KEY;
+  if (!key) throw new Error('RESEND_API_KEY missing');
+  return new Resend(key);
+}
 
 export async function POST(req: Request) {
   try {
@@ -48,7 +54,7 @@ export async function POST(req: Request) {
         : 'Formule Gratuite (Quota 10 appels)';
 
     // Envoi de l'e-mail à l'administrateur avec Resend
-    const { data, error } = await resend.emails.send({
+    const { data, error } = await getResendClient().emails.send({
       from: 'You&Me Médiation <contact@youandme.cloud>',
       to: [ADMIN_EMAIL],
       replyTo: emailCheck.cleanEmail,

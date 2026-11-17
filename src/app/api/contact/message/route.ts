@@ -1,8 +1,14 @@
 import { NextResponse } from 'next/server';
 import { Resend } from 'resend';
 import { validateEmail } from '@/src/lib/validation';
+// Force dynamic: prevents build-time static collection (env vars may be absent in preview/PHP mode).
+export const dynamic = 'force-dynamic';
 
-const resend = new Resend(process.env.RESEND_API_KEY);
+function getResendClient() {
+  const key = process.env.RESEND_API_KEY;
+  if (!key) throw new Error('RESEND_API_KEY missing');
+  return new Resend(key);
+}
 const MAX_AUDIO_BYTES = 2 * 1024 * 1024;
 const AUDIO_EXTENSIONS: Record<string, string> = {
   'audio/aac': 'aac',
@@ -73,7 +79,7 @@ export async function POST(req: Request) {
     });
 
     // Envoi du message au destinataire via Resend
-    const { data, error } = await resend.emails.send({
+    const { data, error } = await getResendClient().emails.send({
       from: 'You&Me Messages <noreply@youandme.cloud>',
       to: [recipientCheck.cleanEmail],
       replyTo: senderCheck.cleanEmail,
