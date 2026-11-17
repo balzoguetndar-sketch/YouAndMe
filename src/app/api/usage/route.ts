@@ -6,6 +6,8 @@ import { ADMIN_SESSION_COOKIE, verifyAdminSessionToken } from '@/src/lib/adminAu
 import { isActiveStandardSession } from '@/src/lib/standardSession';
 import { getLicenseAccess, type LicenseTier, type StoredLicense } from '@/src/lib/license';
 import { ADMIN_EMAIL, validateEmail } from '@/src/lib/validation';
+// Force dynamic rendering: prevents build-time static collection failure when env vars are absent (preview/PHP-backend mode).
+export const dynamic = 'force-dynamic';
 
 const MAX_FREE_USAGES = 10;
 const USAGE_COLUMNS = 'email, usage_count, has_license, license_key, license_tier, license_status, licensed_until, quota_unlimited, advertising_enabled';

@@ -6,10 +6,20 @@ import { ADMIN_SESSION_COOKIE, verifyAdminSessionToken } from '@/src/lib/adminAu
 import { validateEmail } from '@/src/lib/validation';
 import { isDisposableDomain } from '@/src/lib/disposableDomains';
 
-const supabaseAdmin = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-);
+// Force dynamic rendering: prevents build-time static collection which
+// would fail when Supabase env vars are absent (preview/PHP-backend mode).
+export const dynamic = 'force-dynamic';
+
+function getSupabaseAdmin() {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!supabaseUrl || !serviceRoleKey) {
+    throw new Error('Configuration Supabase serveur incomplète.');
+  }
+  return createClient(supabaseUrl, serviceRoleKey, {
+    auth: { autoRefreshToken: false, persistSession: false },
+  });
+}
 
 async function isAdminRequest(): Promise<boolean> {
   const cookieStore = await cookies();
@@ -21,7 +31,7 @@ export async function GET() {
     return NextResponse.json({ error: 'Non autorisé' }, { status: 401 });
   }
 
-  const { data, error } = await supabaseAdmin
+  const { data, error } = await getSupabaseAdmin()
     .from('banners')
     .select('*')
     .order('created_at', { ascending: false });
@@ -91,7 +101,7 @@ export async function POST(request: Request) {
       );
     }
 
-    const { data, error } = await supabaseAdmin.from('banners').insert([{
+    const { data, error } = await getSupabaseAdmin().from('banners').insert([{
       title: body.title.trim(),
       image_url: body.image_url,
       target_url: typeof body.target_url === 'string' ? body.target_url : '#',
@@ -130,7 +140,7 @@ export async function PATCH(request: Request) {
       return NextResponse.json({ error: 'Modification de bannière invalide.' }, { status: 400 });
     }
 
-    const { error } = await supabaseAdmin.from('banners').update(updates).eq('id', body.id);
+    const { error } = await getSupabaseAdmin().from('banners').update(updates).eq('id', body.id);
     if (error) {
       return NextResponse.json({ error: 'Impossible de modifier la bannière.' }, { status: 500 });
     }
@@ -151,7 +161,7 @@ export async function DELETE(request: Request) {
       return NextResponse.json({ error: 'Identifiant de bannière invalide.' }, { status: 400 });
     }
 
-    const { error } = await supabaseAdmin.from('banners').delete().eq('id', body.id);
+    const { error } = await getSupabaseAdmin().from('banners').delete().eq('id', body.id);
     if (error) {
       return NextResponse.json({ error: 'Impossible de supprimer la bannière.' }, { status: 500 });
     }

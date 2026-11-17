@@ -4,6 +4,8 @@ import { NextResponse } from 'next/server';
 import { createStandardSessionAdminClient, hashStandardSessionToken, STANDARD_SESSION_COOKIE } from '@/src/lib/standardSession';
 import { createClient } from '@/src/lib/supabase/server';
 import { ADMIN_EMAIL } from '@/src/lib/validation';
+// Force dynamic rendering: prevents build-time static collection failure when env vars are absent (preview/PHP-backend mode).
+export const dynamic = 'force-dynamic';
 
 const USER_EMAIL_COOKIE_MAX_AGE = 60 * 60 * 24 * 365;
 

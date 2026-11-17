@@ -2,6 +2,8 @@ import os from 'node:os';
 import { createClient } from '@supabase/supabase-js';
 import { NextResponse } from 'next/server';
 import { validateEmail } from '@/src/lib/validation';
+// Force dynamic rendering: prevents build-time static collection failure when env vars are absent (preview/PHP-backend mode).
+export const dynamic = 'force-dynamic';
 
 const HANDOFF_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 

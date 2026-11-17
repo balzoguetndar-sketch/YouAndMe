@@ -6,6 +6,8 @@ import { isActiveStandardSession } from '@/src/lib/standardSession';
 import { createClient as createSupabaseServerClient } from '@/src/lib/supabase/server';
 import { getPrivacySafeIp } from '@/src/lib/ipPrivacy';
 import { ADMIN_EMAIL } from '@/src/lib/validation';
+// Force dynamic rendering: prevents build-time static collection failure when env vars are absent (preview/PHP-backend mode).
+export const dynamic = 'force-dynamic';
 
 const LOG_DEDUPE_WINDOW_MS = 30000;
 

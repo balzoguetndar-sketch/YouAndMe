@@ -3,6 +3,8 @@ import { cookies } from 'next/headers';
 import { createClient } from '@supabase/supabase-js';
 import { ADMIN_SESSION_COOKIE, verifyAdminSessionToken } from '@/src/lib/adminAuth';
 import { validateEmail } from '@/src/lib/validation';
+// Force dynamic rendering: prevents build-time static collection failure when env vars are absent (preview/PHP-backend mode).
+export const dynamic = 'force-dynamic';
 
 type LicensePlan = 'ad_supported' | 'no_ads' | 'supporter' | '7euro' | '12euro' | '50euro';
 

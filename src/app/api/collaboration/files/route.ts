@@ -6,6 +6,8 @@ import { createClient as createAuthClient } from '@/src/lib/supabase/server';
 import { ADMIN_SESSION_COOKIE, verifyAdminSessionToken } from '@/src/lib/adminAuth';
 import { isActiveStandardSession } from '@/src/lib/standardSession';
 import { ADMIN_EMAIL, validateEmail } from '@/src/lib/validation';
+// Force dynamic rendering: prevents build-time static collection failure when env vars are absent (preview/PHP-backend mode).
+export const dynamic = 'force-dynamic';
 
 const BUCKET = 'session-files';
 const MAX_FILE_SIZE = 2 * 1024 * 1024;
