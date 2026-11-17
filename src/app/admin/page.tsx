@@ -5,11 +5,14 @@ import { ADMIN_SESSION_COOKIE, verifyAdminSessionToken } from '@/src/lib/adminAu
 import { AdminDashboard } from '@/src/app/admin/AdminDashboard';
 import type { ConnectionLog } from '@/src/app/admin/LogManager';
 
-// Client administrateur avec typage TypeScript
-const supabaseAdmin = createAdminClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-);
+export const dynamic = 'force-dynamic';
+
+function getSupabaseAdmin() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !key) throw new Error('Configuration Supabase serveur manquante');
+  return createAdminClient(url, key);
+}
 
 export default async function AdminPage() {
   const cookieStore = await cookies();
@@ -51,6 +54,7 @@ export default async function AdminPage() {
       logsError = e instanceof Error ? e.message : 'Erreur de connexion au serveur PHP.';
     }
   } else {
+    const supabaseAdmin = getSupabaseAdmin();
     // Récupération sécurisée et purge automatique 48h via le client admin
     // eslint-disable-next-line react-hooks/purity -- This retention boundary must be calculated for each request.
     const fortyEightHoursAgo = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
