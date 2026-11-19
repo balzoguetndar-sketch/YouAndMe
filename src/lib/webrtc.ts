@@ -35,19 +35,21 @@ export const ICE_SERVERS: RTCConfiguration = {
   iceServers: [
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun.cloudflare.com:3478' },
-    // Support des serveurs TURN configurables via variables d'environnement
-    ...(process.env.NEXT_PUBLIC_TURN_URL
-      ? [
-        {
-          urls: process.env.NEXT_PUBLIC_TURN_URL,
-          username: process.env.NEXT_PUBLIC_TURN_USERNAME || undefined,
-          credential: process.env.NEXT_PUBLIC_TURN_CREDENTIAL || undefined,
-        },
-      ]
-      : []),
   ],
   iceCandidatePoolSize: 2,
 };
+
+export async function getCallIceServers(): Promise<RTCIceServer[]> {
+  const iceServers = [...(ICE_SERVERS.iceServers ?? [])];
+  if (!process.env.NEXT_PUBLIC_PHP_API_URL) return iceServers;
+
+  const turnConfig = await phpApi.webrtc.getTurnCredentials();
+  if (!Array.isArray(turnConfig.iceServers) || turnConfig.iceServers.length === 0) {
+    throw new Error('Le backend n’a fourni aucun serveur TURN.');
+  }
+
+  return [...iceServers, ...turnConfig.iceServers];
+}
 
 type SignalCallback = (data: SignalData) => void;
 type SubscribedCallback = () => void;

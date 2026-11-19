@@ -17,6 +17,67 @@ class WebRTCController {
     }
 
     /**
+     * GET /webrtc/turn-credentials
+     * Fournit la configuration TURN aux utilisateurs authentifiés.
+     */
+    public function getTurnCredentials(): void {
+        $this->auth->authenticate();
+        $meteredConfig = $this->config['metered'] ?? [];
+        $iceServersJson = trim((string)(getenv('METERED_TURN_ICE_SERVERS') ?: ($meteredConfig['ice_servers_json'] ?? '')));
+        if ($iceServersJson !== '') {
+            $iceServers = json_decode($iceServersJson, true);
+            if (!is_array($iceServers) || !$this->hasTurnCredentials($iceServers)) {
+                Response::error('La configuration TURN locale est invalide.', 503);
+            }
+
+            Response::json(['iceServers' => $iceServers]);
+        }
+
+        $appName = trim((string)($meteredConfig['app_name'] ?? getenv('METERED_APP_NAME') ?: ''));
+        $apiKey = trim((string)($meteredConfig['api_key'] ?? getenv('METERED_API_KEY') ?: ''));
+
+        if ($appName === '' || $apiKey === '' || !preg_match('/^[a-zA-Z0-9-]+$/', $appName)) {
+            Response::error('Open Relay n’est pas configuré sur le backend.', 503);
+        }
+
+        $url = sprintf(
+            'https://%s.metered.live/api/v1/turn/credentials?apiKey=%s',
+            $appName,
+            rawurlencode($apiKey)
+        );
+        $curl = curl_init($url);
+        if ($curl === false) {
+            Response::error('Impossible d’initialiser la connexion au service TURN.', 502);
+        }
+
+        curl_setopt_array($curl, [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_FOLLOWLOCATION => false,
+            CURLOPT_CONNECTTIMEOUT => 5,
+            CURLOPT_TIMEOUT => 10,
+            CURLOPT_PROTOCOLS => CURLPROTO_HTTPS,
+            CURLOPT_SSL_VERIFYPEER => true,
+            CURLOPT_SSL_VERIFYHOST => 2,
+            CURLOPT_HTTPHEADER => ['Accept: application/json'],
+        ]);
+        $responseBody = curl_exec($curl);
+        $statusCode = (int)curl_getinfo($curl, CURLINFO_RESPONSE_CODE);
+        $curlError = curl_errno($curl);
+        curl_close($curl);
+
+        if ($responseBody === false || $curlError !== 0 || $statusCode < 200 || $statusCode >= 300) {
+            Response::error('Open Relay n’a pas pu fournir les paramètres TURN.', 502);
+        }
+
+        $iceServers = json_decode($responseBody, true);
+        if (!is_array($iceServers) || !$this->hasTurnCredentials($iceServers)) {
+            Response::error('Open Relay a renvoyé une configuration TURN invalide.', 502);
+        }
+
+        Response::json(['iceServers' => $iceServers]);
+    }
+
+    /**
      * POST /webrtc/signal
      * Envoie un signal WebRTC (appel entrant, offre SDP, réponse, candidat ICE, raccrochage)
      */
@@ -144,5 +205,22 @@ class WebRTCController {
         $data = json_decode($raw, true);
         return is_array($data) ? $data : [];
     }
-}
 
+    private function hasTurnCredentials(array $iceServers): bool {
+        foreach ($iceServers as $server) {
+            if (!is_array($server) || empty($server['username']) || empty($server['credential'])) {
+                continue;
+            }
+
+            $urls = $server['urls'] ?? [];
+            $urls = is_array($urls) ? $urls : [$urls];
+            foreach ($urls as $url) {
+                if (is_string($url) && preg_match('/^turns?:/i', $url)) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+}
