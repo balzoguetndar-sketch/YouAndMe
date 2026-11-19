@@ -226,6 +226,13 @@ class PhpApiClient {
   // 4. Signalement WebRTC (100% PHP / Mutualisé)
   // ============================================================================
   public webrtc = {
+    getTurnCredentials: async () => {
+      return this.request<{ iceServers: RTCIceServer[] }>(
+        'webrtc/turn-credentials',
+        { method: 'GET' }
+      );
+    },
+
     sendSignal: async (targetEmail: string, signal: unknown) => {
       return this.request<{ success: boolean }>(
         'webrtc/signal',
@@ -345,4 +352,3 @@ class PhpApiClient {
 
 export const phpApi = new PhpApiClient();
 export default phpApi;
-

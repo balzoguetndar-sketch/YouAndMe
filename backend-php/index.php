@@ -146,6 +146,10 @@ try {
             break;
 
         // --- Signalement WebRTC 100% PHP/MySQL ---
+        case 'GET webrtc/turn-credentials':
+            (new WebRTCController($config))->getTurnCredentials();
+            break;
+
         case 'POST webrtc/signal':
             (new WebRTCController($config))->sendSignal();
             break;

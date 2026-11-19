@@ -47,5 +47,12 @@ return [
         'secret_key'      => '',
         'webhook_secret'  => '',
     ],
+
+    // Metered TURN; the 20 GB tier uses a local ICE array instead of the TURN REST API.
+    'metered' => [
+        'ice_servers_json' => getenv('METERED_TURN_ICE_SERVERS') ?: '',
+        'app_name' => getenv('METERED_APP_NAME') ?: '',
+        'api_key'  => getenv('METERED_API_KEY') ?: '',
+    ],
 ];
 

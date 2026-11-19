@@ -2,7 +2,15 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createClient } from '@/src/lib/supabase/clients';
-import { ICE_SERVERS, sendSignal, subscribeToSignals, setSignalPollingMode, triggerImmediateSignalPoll, SignalData } from '@/src/lib/webrtc';
+import {
+  ICE_SERVERS,
+  getCallIceServers,
+  sendSignal,
+  subscribeToSignals,
+  setSignalPollingMode,
+  triggerImmediateSignalPoll,
+  SignalData,
+} from '@/src/lib/webrtc';
 import { soundManager } from '@/src/lib/sound';
 import { PricingPlans } from '@/src/components/subscription/PricingPlans';
 import { Whiteboard } from '@/src/components/collaboration/Whiteboard';
@@ -154,6 +162,7 @@ export function ActiveCallRoom({
   const [micMuted, setMicMuted] = useState(false);
   const [camOff, setCamOff] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState<'connecting' | 'connected' | 'disconnected'>('connecting');
+  const [callIceServers, setCallIceServers] = useState<RTCIceServer[] | null>(null);
   const [connectionWarning, setConnectionWarning] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'video' | 'tarifs' | 'whiteboard' | 'files'>('video');
   const [isWhiteboardControlReady, setIsWhiteboardControlReady] = useState(false);
@@ -429,13 +438,31 @@ export function ActiveCallRoom({
     }
   };
 
+  useEffect(() => {
+    let isMounted = true;
+
+    void getCallIceServers().then((iceServers) => {
+      if (isMounted) setCallIceServers(iceServers);
+    }).catch((error: unknown) => {
+      console.error('Impossible de charger la configuration TURN :', error);
+      if (!isMounted) return;
+      setConnectionWarning('Relais TURN indisponible ou non configuré ; tentative de connexion directe.');
+      setCallIceServers(ICE_SERVERS.iceServers ?? []);
+    });
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
   // 2. Initialisation WebRTC complète avec file d'attente ICE Candidate sécurisée
   useEffect(() => {
+    if (!callIceServers) return;
     let isMounted = true;
     let remoteVideoElement = remoteVideoRef.current;
     let remoteAudioElement = remoteAudioRef.current;
     const pendingIceCandidates: RTCIceCandidateInit[] = [];
-    const pc = new RTCPeerConnection(ICE_SERVERS);
+    const pc = new RTCPeerConnection({ ...ICE_SERVERS, iceServers: callIceServers });
     pcRef.current = pc;
     // Passage en mode polling rapide pendant toute la durée de la négociation/appel
     setSignalPollingMode('fast');
@@ -839,7 +866,7 @@ export function ActiveCallRoom({
       pc.close();
       releaseHardware();
     };
-  }, [callerEmail, receiverEmail, callId, isInitiator, callType, ambience, finishCall]);
+  }, [callerEmail, receiverEmail, callId, isInitiator, callType, ambience, finishCall, callIceServers]);
 
   useEffect(() => {
     const videoElement = localVideoRef.current;
